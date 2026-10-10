@@ -1,3 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Taupik_BikeTracker</string>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#0B7BEA</item>
+        <item name="android:navigationBarColor">#071C2E</item>
+        <item name="android:statusBarColor">#073B66</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>
