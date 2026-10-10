@@ -458,9 +458,9 @@ class MainActivity : Activity() {
                 gpsListener
             )
             gpsText.text = "GPS aktif • Mencari satelit..."
-        } catch (_: SecurityException) {
+        } catch (e: SecurityException) {
             gpsText.text = "Izin GPS belum tersedia"
-        } catch (_: IllegalArgumentException) {
+        } catch (e: IllegalArgumentException) {
             gpsText.text = "GPS tidak tersedia di perangkat ini"
         }
     }
@@ -468,7 +468,7 @@ class MainActivity : Activity() {
     private fun stopGps() {
         try {
             locationManager.removeUpdates(gpsListener)
-        } catch (_: SecurityException) {
+        } catch (e: SecurityException) {
         }
     }
 
