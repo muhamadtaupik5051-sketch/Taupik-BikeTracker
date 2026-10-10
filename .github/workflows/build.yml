@@ -1,3 +1,4 @@
+
 name: Build RideTrack Pro V2 APK
 
 on:
@@ -24,17 +25,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
 
       - name: Check project files
         run: |
           ls -la
+          ls -la app
           gradle --version
-          test -f settings.gradle -o -f settings.gradle.kts
 
       - name: Build APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
