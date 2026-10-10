@@ -27,16 +27,16 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Grant permission to Gradle wrapper
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Check project files
         run: |
-          if [ ! -f ./gradlew ]; then
-            echo "ERROR: File gradlew tidak ditemukan di folder utama."
-            exit 1
-          fi
-          chmod +x ./gradlew
+          ls -la
+          gradle --version
 
       - name: Build APK
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
