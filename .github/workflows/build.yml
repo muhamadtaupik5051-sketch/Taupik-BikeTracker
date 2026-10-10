@@ -36,7 +36,9 @@ jobs:
           find . -maxdepth 4 -type f | sort
 
       - name: Build APK
-        run: gradle assembleDebug --stacktrace --info
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace --info --console=plain 2>&1 | tee build.log
 
       - name: Upload APK
         if: success()
