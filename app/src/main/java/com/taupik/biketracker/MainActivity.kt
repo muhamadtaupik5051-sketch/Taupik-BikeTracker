@@ -1,5 +1,4 @@
-
-package com.taupik.biketracker
+package com.biketracker.app
 
 import android.app.Activity
 import android.os.Bundle
