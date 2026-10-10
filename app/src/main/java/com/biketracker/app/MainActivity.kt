@@ -3,94 +3,127 @@ package com.biketracker.app
 
 import android.Manifest
 import android.app.Activity
-import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity() {
 
-    private val navy = Color.rgb(7, 28, 46)
-    private val card = Color.rgb(20, 48, 64)
-    private val green = Color.rgb(0, 220, 130)
+    private val green = Color.rgb(38, 190, 125)
     private val white = Color.WHITE
-    private val muted = Color.rgb(180, 198, 207)
+    private val muted = Color.rgb(170, 180, 190)
+    private val dark = Color.rgb(16, 24, 32)
+    private val card = Color.rgb(31, 43, 54)
 
     private lateinit var locationManager: LocationManager
-    private val handler = Handler(Looper.getMainLooper())
 
     private var mode = "Sepeda"
     private var lastLocation: Location? = null
+
     private var distanceMeters = 0f
     private var speedKmh = 0f
+    private var maxSpeedKmh = 0f
+    private var averageSpeedKmh = 0f
+
     private var elapsedBeforeRun = 0L
     private var runStartedAt = 0L
     private var running = false
     private var paused = false
-    private var permissionPending = false
 
     private lateinit var speedText: TextView
     private lateinit var distanceText: TextView
     private lateinit var timeText: TextView
     private lateinit var gpsText: TextView
+    private lateinit var averageSpeedText: TextView
+    private lateinit var maxSpeedText: TextView
     private lateinit var actionArea: LinearLayout
+
+    private val handler = Handler(Looper.getMainLooper())
 
     private val timer = object : Runnable {
         override fun run() {
-            if (running && !paused) {
+            if (running) {
                 timeText.text = formatTime(currentElapsed())
+                updateAverageSpeed()
                 handler.postDelayed(this, 1000)
             }
         }
     }
 
     private val gpsListener = object : LocationListener {
+
         override fun onLocationChanged(location: Location) {
-            if (location.hasAccuracy() && location.accuracy > 30f) {
-                gpsText.text = "GPS AKTIF • Sinyal kurang akurat"
+            if (location.hasAccuracy() && location.accuracy > 20f) {
+                gpsText.text = "GPS aktif • Mencari sinyal akurat"
                 return
             }
 
-            gpsText.text = if (location.hasAccuracy()) {
-                "GPS TERKUNCI • Akurasi ±${location.accuracy.toInt()} m"
-            } else {
-                "GPS AKTIF • Lokasi diterima"
-            }
+            if (!running) return
 
             val previous = lastLocation
-            if (previous != null) {
+
+            if (previous != null && location.time > previous.time) {
                 val delta = previous.distanceTo(location)
-                if (delta in 0.5f..100f) {
+                val seconds = (location.time - previous.time) / 1000.0
+
+                val speedLimit = when (mode) {
+                    "Sepeda" -> 80.0
+                    "Lari" -> 30.0
+                    else -> 20.0
+                }
+
+                if (
+                    seconds > 0 &&
+                    delta in 0.5f..100f &&
+                    delta / seconds * 3.6 <= speedLimit
+                ) {
                     distanceMeters += delta
                 }
             }
 
             lastLocation = location
-            speedKmh = if (location.hasSpeed()) {
-                (location.speed * 3.6f).coerceAtLeast(0f)
+
+            val gpsSpeed = if (location.hasSpeed()) {
+                location.speed * 3.6f
             } else {
                 0f
             }
 
-            speedText.text = String.format(Locale.US, "%.1f", speedKmh)
-            distanceText.text = String.format(
-                Locale.US, "%.2f km", distanceMeters / 1000f
-            )
+            val limit = when (mode) {
+                "Sepeda" -> 80f
+                "Lari" -> 30f
+                else -> 20f
+            }
+
+            speedKmh = if (gpsSpeed in 0f..limit) gpsSpeed else 0f
+
+            if (speedKmh > maxSpeedKmh) {
+                maxSpeedKmh = speedKmh
+            }
+
+            updateDashboardStats()
+
+            gpsText.text = if (location.hasAccuracy()) {
+                "GPS TERKUNCI • Akurasi ±${location.accuracy.toInt()} m"
+            } else {
+                "GPS aktif • Lokasi diterima"
+            }
         }
 
         override fun onProviderEnabled(provider: String) {
@@ -105,151 +138,179 @@ class MainActivity : Activity() {
 
         @Suppress("DEPRECATION")
         override fun onStatusChanged(
-            provider: String?, status: Int, extras: Bundle?
+            provider: String?,
+            status: Int,
+            extras: Bundle?
         ) {}
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        window.statusBarColor = navy
-        window.navigationBarColor = navy
-
-        locationManager =
-            getSystemService(Context.LOCATION_SERVICE) as LocationManager
-
+        window.statusBarColor = dark
+        window.navigationBarColor = dark
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         showHome()
     }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
-    private fun column(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(20), dp(20), dp(20), dp(24))
-        setBackgroundColor(navy)
+    private fun column(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+            setBackgroundColor(dark)
+        }
     }
 
-    private fun text(
+    private fun showScreen(root: LinearLayout) {
+        val scroll = ScrollView(this).apply {
+            fillViewport = true
+            setBackgroundColor(dark)
+            addView(root)
+        }
+        setContentView(scroll)
+    }
+
+    private fun makeText(
         value: String,
         size: Float,
         color: Int,
         bold: Boolean = false
-    ): TextView = TextView(this).apply {
-        text = value
-        textSize = size
-        setTextColor(color)
-        gravity = Gravity.CENTER
-        setPadding(dp(4), dp(5), dp(4), dp(5))
-        if (bold) setTypeface(null, Typeface.BOLD)
+    ): TextView {
+        return TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) setTypeface(null, Typeface.BOLD)
+        }
+    }
+
+    private fun addGap(root: LinearLayout, height: Int) {
+        root.addView(View(this), LinearLayout.LayoutParams(1, dp(height)))
+    }
+
+    private fun makeButton(
+        label: String,
+        color: Int,
+        action: () -> Unit
+    ): Button {
+        return Button(this).apply {
+            text = label
+            setTextColor(white)
+            textSize = 14f
+            isAllCaps = false
+            background = GradientDrawable().apply {
+                setColor(color)
+                cornerRadius = dp(12).toFloat()
+            }
+            setOnClickListener { action() }
+
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                bottomMargin = dp(10)
+            }
+        }
     }
 
     private fun addButton(
-        parent: LinearLayout,
+        root: LinearLayout,
         label: String,
         color: Int,
-        onClick: () -> Unit
+        action: () -> Unit
     ) {
-        val button = TextView(this).apply {
-            text = label
-            textSize = 16f
-            setTextColor(white)
-            gravity = Gravity.CENTER
-            setTypeface(null, Typeface.BOLD)
-            setPadding(dp(12), dp(15), dp(12), dp(15))
-            background = GradientDrawable().apply {
-                setColor(color)
-                cornerRadius = dp(14).toFloat()
-            }
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onClick() }
-        }
-
-        val params = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-        params.setMargins(0, dp(7), 0, dp(7))
-        parent.addView(button, params)
+        root.addView(makeButton(label, color, action))
     }
 
-    private fun addGap(parent: LinearLayout, height: Int) {
-        parent.addView(View(this), LinearLayout.LayoutParams(1, dp(height)))
+    private fun makeStatCard(
+        label: String,
+        initial: String
+    ): Pair<View, TextView> {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(12), dp(8), dp(12))
+            background = GradientDrawable().apply {
+                setColor(card)
+                cornerRadius = dp(14).toFloat()
+            }
+        }
+
+        box.addView(
+            makeText(label, 12f, muted, true),
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val value = makeText(initial, 19f, white, true).apply {
+            gravity = Gravity.CENTER
+        }
+
+        box.addView(value)
+        return Pair(box, value)
     }
 
     private fun showHome() {
-        val layout = column()
-        layout.gravity = Gravity.CENTER_HORIZONTAL
+        val root = column()
 
-        layout.addView(text("Taupik_BikeTracker", 27f, white, true))
-        layout.addView(text("GPS OUTDOOR TRACKER", 14f, green, true))
-        addGap(layout, 22)
+        addGap(root, 28)
+        root.addView(makeText("Taupik_BikeTracker", 27f, white, true))
+        root.addView(makeText("Catat aktivitas olahraga dengan GPS", 14f, muted))
 
-        addButton(layout, "🚴  MULAI BERSEPEDA", card) {
+        addGap(root, 32)
+        root.addView(makeText("PILIH AKTIVITAS", 16f, green, true))
+        addGap(root, 12)
+
+        addButton(root, "SEPEDA", green) {
             openDashboard("Sepeda")
         }
-        addButton(layout, "🏃  MULAI BERLARI", card) {
+
+        addButton(root, "LARI", card) {
             openDashboard("Lari")
         }
-        addButton(layout, "🚶  MULAI BERJALAN", card) {
+
+        addButton(root, "JALAN", card) {
             openDashboard("Jalan")
         }
 
-        addGap(layout, 16)
-        addButton(layout, "📋 RIWAYAT PERJALANAN", green) {
+        addGap(root, 20)
+
+        addButton(root, "RIWAYAT AKTIVITAS", card) {
             showHistory()
         }
 
-        layout.addView(
-            text(
-                "GPS digunakan untuk mengukur kecepatan dan jarak.",
-                12f, muted
-            )
-        )
-        setContentView(layout)
+        showScreen(root)
     }
 
     private fun openDashboard(selectedMode: String) {
         mode = selectedMode
         distanceMeters = 0f
         speedKmh = 0f
+        maxSpeedKmh = 0f
+        averageSpeedKmh = 0f
         elapsedBeforeRun = 0L
+        runStartedAt = 0L
         lastLocation = null
         running = false
         paused = false
 
         val root = column()
-        root.addView(text("Taupik_BikeTracker", 23f, white, true))
-        root.addView(text("MODE ${mode.uppercase()}", 14f, green, true))
-        addGap(root, 10)
 
-        val speedCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(10), dp(18), dp(10), dp(18))
-            background = GradientDrawable().apply {
-                setColor(card)
-                cornerRadius = dp(24).toFloat()
-            }
-        }
+        root.addView(makeText(mode.uppercase(Locale.getDefault()), 16f, green, true))
+        root.addView(makeText("KECEPATAN", 14f, muted))
+        addGap(root, 4)
 
-        speedCard.addView(text("KECEPATAN SAAT INI", 14f, muted))
-        speedText = text("0.0", 76f, green, true)
-        speedCard.addView(speedText)
-        speedCard.addView(text("km/jam", 19f, white))
+        speedText = makeText("0.0", 60f, white, true)
+        root.addView(speedText)
+        root.addView(makeText("km/jam", 16f, muted))
 
-        root.addView(
-            speedCard,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(225)
-            )
-        )
+        addGap(root, 24)
 
-        addGap(root, 12)
-
-        val stats = LinearLayout(this).apply {
+        val firstRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
 
@@ -259,195 +320,110 @@ class MainActivity : Activity() {
         val timeCard = makeStatCard("WAKTU", "00:00:00")
         timeText = timeCard.second
 
-        stats.addView(
+        firstRow.addView(
             distanceCard.first,
-            LinearLayout.LayoutParams(0, dp(100), 1f)
+            LinearLayout.LayoutParams(0, dp(105), 1f)
         )
-        stats.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
-        stats.addView(
+        firstRow.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
+        firstRow.addView(
             timeCard.first,
-            LinearLayout.LayoutParams(0, dp(100), 1f)
+            LinearLayout.LayoutParams(0, dp(105), 1f)
         )
-        root.addView(stats)
 
-        addGap(root, 8)
-        gpsText = text("GPS belum dimulai", 13f, muted)
+        root.addView(firstRow)
+        addGap(root, 10)
+
+        val secondRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        val averageCard = makeStatCard("RATA-RATA", "0.0 km/jam")
+        averageSpeedText = averageCard.second
+
+        val maxCard = makeStatCard("MAKSIMUM", "0.0 km/jam")
+        maxSpeedText = maxCard.second
+
+        secondRow.addView(
+            averageCard.first,
+            LinearLayout.LayoutParams(0, dp(105), 1f)
+        )
+        secondRow.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
+        secondRow.addView(
+            maxCard.first,
+            LinearLayout.LayoutParams(0, dp(105), 1f)
+        )
+
+        root.addView(secondRow)
+        addGap(root, 18)
+
+        gpsText = makeText("GPS belum dimulai", 13f, muted)
         root.addView(gpsText)
+
+        addGap(root, 20)
 
         actionArea = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
         root.addView(actionArea)
-        renderActions()
 
         addButton(root, "KEMBALI KE BERANDA", card) {
-            if (running) {
-                Toast.makeText(
-                    this,
-                    "Selesaikan aktivitas terlebih dahulu",
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                showHome()
-            }
+            stopGps()
+            handler.removeCallbacks(timer)
+            running = false
+            paused = false
+            showHome()
         }
 
-        val scroll = ScrollView(this)
-        scroll.setBackgroundColor(navy)
-        scroll.addView(root)
-        setContentView(scroll)
-    }
-
-    private fun makeStatCard(
-        label: String,
-        initial: String
-    ): Pair<LinearLayout, TextView> {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(6), dp(8), dp(6), dp(8))
-            background = GradientDrawable().apply {
-                setColor(card)
-                cornerRadius = dp(16).toFloat()
-            }
-        }
-
-        box.addView(text(label, 12f, muted, true))
-        val value = text(initial, 21f, white, true)
-        box.addView(value)
-        return Pair(box, value)
+        renderActions()
+        showScreen(root)
     }
 
     private fun renderActions() {
         actionArea.removeAllViews()
 
-        if (!running) {
-            addButton(actionArea, "▶  MULAI", green) {
-                startOrRequestPermission()
+        if (running) {
+            addButton(actionArea, "JEDA", green) {
+                pauseTracking()
+            }
+            addButton(actionArea, "SELESAI", Color.rgb(190, 65, 65)) {
+                finishTracking()
             }
         } else if (paused) {
-            addButton(actionArea, "▶  LANJUTKAN", green) {
+            addButton(actionArea, "LANJUTKAN", green) {
                 resumeTracking()
             }
-            addButton(
-                actionArea, "■  BERHENTI & SIMPAN",
-                Color.rgb(190, 65, 65)
-            ) {
+            addButton(actionArea, "SELESAI", Color.rgb(190, 65, 65)) {
                 finishTracking()
             }
         } else {
-            addButton(
-                actionArea, "Ⅱ  JEDA",
-                Color.rgb(200, 135, 25)
-            ) {
-                pauseTracking()
-            }
-            addButton(
-                actionArea, "■  BERHENTI & SIMPAN",
-                Color.rgb(190, 65, 65)
-            ) {
-                finishTracking()
+            addButton(actionArea, "MULAI", green) {
+                startTracking()
             }
         }
     }
 
     private fun hasLocationPermission(): Boolean {
-        return checkSelfPermission(
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED ||
-        checkSelfPermission(
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
     }
 
-    private fun startOrRequestPermission() {
+    private fun startTracking() {
         if (!hasLocationPermission()) {
-            permissionPending = true
             requestPermissions(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 ),
-                101
+                100
             )
             return
         }
 
-        startTracking()
-    }
-
-    @Deprecated("Android runtime permission callback")
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(
-            requestCode, permissions, grantResults
-        )
-
-        if (requestCode == 101 && permissionPending) {
-            permissionPending = false
-
-            if (hasLocationPermission()) {
-                startTracking()
-            } else {
-                gpsText.text = "Izin lokasi ditolak"
-                Toast.makeText(
-                    this,
-                    "Izinkan akses lokasi agar GPS berfungsi",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-    }
-
-    @Suppress("MissingPermission")
-    private fun registerGps() {
-        if (!hasLocationPermission()) return
-
-        try {
-            if (locationManager.isProviderEnabled(
-                    LocationManager.GPS_PROVIDER
-                )
-            ) {
-                locationManager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    1000L,
-                    1f,
-                    gpsListener,
-                    Looper.getMainLooper()
-                )
-                gpsText.text = "Mencari sinyal GPS..."
-            } else {
-                gpsText.text = "GPS mati • Aktifkan lokasi HP"
-            }
-
-            if (checkSelfPermission(
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                val last = locationManager.getLastKnownLocation(
-                    LocationManager.GPS_PROVIDER
-                )
-                if (last != null) {
-                    gpsListener.onLocationChanged(last)
-                }
-            }
-        } catch (e: Exception) {
-            gpsText.text = "GPS tidak tersedia • Periksa pengaturan lokasi"
-        }
-    }
-
-    private fun startTracking() {
         running = true
         paused = false
-        lastLocation = null
-        runStartedAt = SystemClock.elapsedRealtime()
-
-        window.addFlags(
-            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        )
+        runStartedAt = System.currentTimeMillis()
 
         registerGps()
         handler.removeCallbacks(timer)
@@ -455,27 +431,70 @@ class MainActivity : Activity() {
         renderActions()
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == 100) {
+            if (hasLocationPermission()) {
+                startTracking()
+            } else {
+                gpsText.text = "Izin lokasi diperlukan untuk memakai GPS"
+            }
+        }
+    }
+
+    private fun registerGps() {
+        if (!hasLocationPermission()) return
+
+        try {
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER,
+                1000L,
+                0f,
+                gpsListener
+            )
+            gpsText.text = "GPS aktif • Mencari satelit..."
+        } catch (_: SecurityException) {
+            gpsText.text = "Izin GPS belum tersedia"
+        } catch (_: IllegalArgumentException) {
+            gpsText.text = "GPS tidak tersedia di perangkat ini"
+        }
+    }
+
+    private fun stopGps() {
+        try {
+            locationManager.removeUpdates(gpsListener)
+        } catch (_: SecurityException) {
+        }
+    }
+
     private fun pauseTracking() {
-        if (!running || paused) return
+        if (!running) return
 
         elapsedBeforeRun = currentElapsed()
+        running = false
         paused = true
-        speedKmh = 0f
-        speedText.text = "0.0"
 
         handler.removeCallbacks(timer)
-        locationManager.removeUpdates(gpsListener)
-        gpsText.text = "Aktivitas dijeda"
-
+        stopGps()
+        speedKmh = 0f
+        speedText.text = "0.0"
         renderActions()
     }
 
     private fun resumeTracking() {
-        if (!running || !paused) return
+        if (!hasLocationPermission()) {
+            startTracking()
+            return
+        }
 
+        running = true
         paused = false
-        runStartedAt = SystemClock.elapsedRealtime()
-        lastLocation = null
+        runStartedAt = System.currentTimeMillis()
 
         registerGps()
         handler.removeCallbacks(timer)
@@ -484,9 +503,8 @@ class MainActivity : Activity() {
     }
 
     private fun currentElapsed(): Long {
-        return if (running && !paused) {
-            elapsedBeforeRun +
-                SystemClock.elapsedRealtime() - runStartedAt
+        return if (running) {
+            elapsedBeforeRun + System.currentTimeMillis() - runStartedAt
         } else {
             elapsedBeforeRun
         }
@@ -507,29 +525,54 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun finishTracking() {
-        if (!running) return
+    private fun updateAverageSpeed() {
+        val hours = currentElapsed() / 3600000.0
 
+        averageSpeedKmh = if (hours > 0.0) {
+            (distanceMeters / 1000.0 / hours).toFloat()
+        } else {
+            0f
+        }
+
+        updateDashboardStats()
+    }
+
+    private fun updateDashboardStats() {
+        distanceText.text = String.format(
+            Locale.US,
+            "%.2f km",
+            distanceMeters / 1000f
+        )
+
+        averageSpeedText.text = String.format(
+            Locale.US,
+            "%.1f km/jam",
+            averageSpeedKmh
+        )
+
+        maxSpeedText.text = String.format(
+            Locale.US,
+            "%.1f km/jam",
+            maxSpeedKmh
+        )
+
+        speedText.text = String.format(Locale.US, "%.1f", speedKmh)
+        timeText.text = formatTime(currentElapsed())
+    }
+
+    private fun finishTracking() {
         val elapsed = currentElapsed()
 
         running = false
         paused = false
+        elapsedBeforeRun = elapsed
 
         handler.removeCallbacks(timer)
-        locationManager.removeUpdates(gpsListener)
+        stopGps()
 
-        window.clearFlags(
-            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        )
-
+        speedKmh = 0f
+        updateAverageSpeed()
         saveActivity(elapsed)
-
-        Toast.makeText(
-            this,
-            "Aktivitas selesai dan disimpan",
-            Toast.LENGTH_LONG
-        ).show()
-
         showSummary(elapsed)
     }
 
@@ -537,17 +580,19 @@ class MainActivity : Activity() {
         val prefs = getSharedPreferences("bike_history", MODE_PRIVATE)
         val oldHistory = prefs.getString("items", "") ?: ""
 
-        val date = java.text.SimpleDateFormat(
-            "dd-MM-yyyy HH:mm",
+        val date = SimpleDateFormat(
+            "dd/MM/yyyy HH:mm",
             Locale.getDefault()
-        ).format(java.util.Date())
+        ).format(Date())
 
         val record = listOf(
             date,
             mode,
             String.format(Locale.US, "%.2f", distanceMeters / 1000f),
             formatTime(elapsed),
-            String.format(Locale.US, "%.1f", speedKmh)
+            String.format(Locale.US, "%.1f", speedKmh),
+            String.format(Locale.US, "%.1f", averageSpeedKmh),
+            String.format(Locale.US, "%.1f", maxSpeedKmh)
         ).joinToString("|")
 
         val updatedHistory = if (oldHistory.isBlank()) {
@@ -562,28 +607,43 @@ class MainActivity : Activity() {
     private fun showSummary(elapsed: Long) {
         val root = column()
 
-        root.addView(text("AKTIVITAS SELESAI", 24f, green, true))
-        root.addView(text("Ringkasan $mode", 17f, white))
-        addGap(root, 24)
+        root.addView(makeText("AKTIVITAS SELESAI", 24f, green, true))
+        root.addView(makeText("Ringkasan $mode", 17f, white))
 
-        root.addView(text("Jarak", 14f, muted))
+        addGap(root, 24)
+        root.addView(makeText("Jarak", 14f, muted))
         root.addView(
-            text(
+            makeText(
                 String.format(Locale.US, "%.2f km", distanceMeters / 1000f),
-                32f, white, true
+                32f,
+                white,
+                true
             )
         )
 
         addGap(root, 12)
-        root.addView(text("Waktu", 14f, muted))
-        root.addView(text(formatTime(elapsed), 25f, white, true))
+        root.addView(makeText("Waktu", 14f, muted))
+        root.addView(makeText(formatTime(elapsed), 25f, white, true))
 
         addGap(root, 12)
-        root.addView(text("Kecepatan terakhir", 14f, muted))
+        root.addView(makeText("Kecepatan rata-rata", 14f, muted))
         root.addView(
-            text(
-                String.format(Locale.US, "%.1f km/jam", speedKmh),
-                23f, green, true
+            makeText(
+                String.format(Locale.US, "%.1f km/jam", averageSpeedKmh),
+                23f,
+                white,
+                true
+            )
+        )
+
+        addGap(root, 12)
+        root.addView(makeText("Kecepatan maksimum", 14f, muted))
+        root.addView(
+            makeText(
+                String.format(Locale.US, "%.1f km/jam", maxSpeedKmh),
+                23f,
+                green,
+                true
             )
         )
 
@@ -597,14 +657,14 @@ class MainActivity : Activity() {
             showHistory()
         }
 
-        setContentView(root)
+        showScreen(root)
     }
 
     private fun showHistory() {
         val root = column()
 
-        root.addView(text("RIWAYAT AKTIVITAS", 24f, white, true))
-        root.addView(text("Tersimpan di HP kamu", 13f, green))
+        root.addView(makeText("RIWAYAT AKTIVITAS", 24f, white, true))
+        root.addView(makeText("Tersimpan di HP kamu", 13f, green))
         addGap(root, 16)
 
         val prefs = getSharedPreferences("bike_history", MODE_PRIVATE)
@@ -612,9 +672,10 @@ class MainActivity : Activity() {
 
         if (history.isBlank()) {
             root.addView(
-                text(
+                makeText(
                     "Belum ada aktivitas tersimpan.\nMulai olahraga untuk membuat riwayat.",
-                    15f, muted
+                    15f,
+                    muted
                 )
             )
         } else {
@@ -624,68 +685,78 @@ class MainActivity : Activity() {
                 if (parts.size >= 5) {
                     val item = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
-                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        setPadding(dp(12), dp(12), dp(12), dp(12))
                         background = GradientDrawable().apply {
                             setColor(card)
-                            cornerRadius = dp(14).toFloat()
+                            cornerRadius = dp(12).toFloat()
                         }
                     }
 
-                    item.addView(text(parts[1], 18f, green, true))
-                    item.addView(text(parts[0], 12f, muted))
+                    item.addView(makeText(parts[0], 13f, muted))
+                    item.addView(makeText(parts[1], 18f, green, true))
                     item.addView(
-                        text("Jarak: ${parts[2]} km", 15f, white)
+                        makeText(
+                            "Jarak: ${parts[2]} km",
+                            15f,
+                            white
+                        )
                     )
                     item.addView(
-                        text("Waktu: ${parts[3]}", 15f, white)
-                    )
-                    item.addView(
-                        text("Kecepatan terakhir: ${parts[4]} km/jam", 13f, muted)
+                        makeText(
+                            "Waktu: ${parts[3]}",
+                            15f,
+                            white
+                        )
                     )
 
-                    val params = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    val average = parts.getOrNull(5) ?: "0.0"
+                    val maximum = parts.getOrNull(6) ?: parts[4]
+
+                    item.addView(
+                        makeText(
+                            "Rata-rata: $average km/jam",
+                            14f,
+                            white
+                        )
                     )
-                    params.setMargins(0, 0, 0, dp(12))
-                    root.addView(item, params)
+                    item.addView(
+                        makeText(
+                            "Maksimum: $maximum km/jam",
+                            14f,
+                            white
+                        )
+                    )
+
+                    root.addView(item)
+                    addGap(root, 10)
                 }
             }
         }
 
-        addGap(root, 12)
-
-        addButton(root, "HAPUS SEMUA RIWAYAT", Color.rgb(150, 45, 45)) {
-            android.app.AlertDialog.Builder(this)
-                .setTitle("Hapus riwayat?")
-                .setMessage("Semua riwayat aktivitas yang tersimpan akan dihapus.")
-                .setNegativeButton("Batal", null)
-                .setPositiveButton("Hapus") { _, _ ->
-                    prefs.edit().remove("items").apply()
-                    showHistory()
-                }
-                .show()
-        }
+        addGap(root, 16)
 
         addButton(root, "KEMBALI KE BERANDA", green) {
             showHome()
         }
 
-        val scroll = ScrollView(this)
-        scroll.setBackgroundColor(navy)
-        scroll.addView(root)
-        setContentView(scroll)
+        showScreen(root)
     }
 
     override fun onPause() {
         super.onPause()
-        // Timer tetap dikelola selama aktivitas berlangsung.
-        // Versi ini belum menjamin pelacakan GPS di latar belakang.
+
+        if (running) {
+            elapsedBeforeRun = currentElapsed()
+            running = false
+            paused = true
+            handler.removeCallbacks(timer)
+            stopGps()
+        }
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(timer)
-        locationManager.removeUpdates(gpsListener)
+        stopGps()
         super.onDestroy()
     }
 }
