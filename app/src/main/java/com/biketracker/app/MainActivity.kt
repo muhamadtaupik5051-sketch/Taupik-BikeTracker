@@ -91,7 +91,7 @@ class MainActivity : Activity() {
                 if (
                     seconds > 0 &&
                     delta in 0.5f..100f &&
-                    delta / seconds * 3.6 <= speedLimit
+                    delta.toDouble() / seconds * 3.6 <= speedLimit
                 ) {
                     distanceMeters += delta
                 }
