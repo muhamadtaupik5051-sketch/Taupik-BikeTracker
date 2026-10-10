@@ -231,15 +231,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun addButton(
-        root: LinearLayout,
-        label: String,
-        color: Int,
-        action: () -> Unit
-    ) {
-        root.addView(makeButton(label, color, action))
-    }
-
+    
     private fun makeStatCard(
         label: String,
         initial: String
@@ -250,4 +242,20 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(12), dp(8), dp(12))
 
             background = GradientDrawable().apply {
-                set
+                setColor(card)
+                cornerRadius = dp(14).toFloat()
+            }
+        }
+
+        box.addView(
+            makeText(label, 12f, muted, true)
+        )
+
+        val value = makeText(initial, 19f, white, true).apply {
+            gravity = Gravity.CENTER
+        }
+
+        box.addView(value)
+
+        return Pair(box, value)
+    }
