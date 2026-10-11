@@ -34,7 +34,20 @@ object Themes {
         AppTheme("Pink Pastel", false, listOf("#FFF5F8", "#FFFFFF", "#FCE4EC", "#E91E63", "#2B1B22", "#8A6F7A", "#16A34A", "#DC2626"))
     )
 
-    private val targets = intArrayOf(1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 40, 50, 75, 100)
+    /** Warna aksen per aktivitas: dipakai di beranda, layar tracking, dan ringkasan. */
+    fun modeAccent(m: String): Int = when (m) {
+        "Sepeda" -> 0xFF19B5FF.toInt()
+        "Lari" -> 0xFFFF7A2E.toInt()
+        else -> 0xFF34D399.toInt()
+    }
+
+    private fun targetOptions(m: String): IntArray = when (m) {
+        "Sepeda" -> intArrayOf(5, 10, 15, 20, 25, 30, 40, 50, 75, 100)
+        "Lari" -> intArrayOf(1, 2, 3, 5, 7, 10, 15, 21, 42)
+        else -> intArrayOf(2000, 3000, 4000, 5000, 6000, 8000, 10000, 12000, 15000, 20000)
+    }
+
+    private fun defaultTarget(m: String) = when (m) { "Sepeda" -> 20; "Lari" -> 5; else -> 8000 }
 
     private fun p(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
     fun index(c: Context) = p(c).getInt("theme", 0).coerceIn(0, all.size - 1)
@@ -43,12 +56,19 @@ object Themes {
     fun keepOn(c: Context) = p(c).getBoolean("keep_on", true)
     fun setKeepOn(c: Context, v: Boolean) = p(c).edit().putBoolean("keep_on", v).apply()
 
-    fun target(c: Context) = p(c).getInt("target_km", 10)
-    fun stepTarget(c: Context, dir: Int) {
-        val cur = target(c)
-        val n = if (dir > 0) targets.firstOrNull { it > cur } else targets.lastOrNull { it < cur }
-        if (n != null) p(c).edit().putInt("target_km", n).apply()
+    /** Target per aktivitas: km untuk Sepeda/Lari, langkah untuk Jalan. */
+    fun target(c: Context, m: String) = p(c).getInt("target_" + m, defaultTarget(m))
+
+    fun stepTarget(c: Context, m: String, dir: Int) {
+        val opts = targetOptions(m)
+        val cur = target(c, m)
+        val n = if (dir > 0) opts.firstOrNull { it > cur } else opts.lastOrNull { it < cur }
+        if (n != null) p(c).edit().putInt("target_" + m, n).apply()
     }
+
+    fun targetLabel(m: String, v: Int): String = if (m == "Jalan") Fmt.int(v) else v.toString() + " km"
+
+    fun targetUnit(m: String): String = if (m == "Jalan") "langkah" else "km"
 
     fun weight(c: Context) = p(c).getInt("weight_kg", 65)
     fun stepWeight(c: Context, dir: Int) =
