@@ -25,7 +25,8 @@ fun onColor(c: Int): Int {
 
 object Themes {
     val all = listOf(
-        AppTheme("Neon Gelap", true, listOf("#050F22", "#0C1E3A", "#112A4D", "#00B8FF", "#F5F9FF", "#97AECA", "#27D282", "#F44C58")),
+        AppTheme("Hijau Neon", true, listOf("#050805", "#0E1A0F", "#16281A", "#2BE35A", "#E9F5EA", "#8FA891", "#2BE35A", "#FF3B3B")),
+        AppTheme("Neon Biru", true, listOf("#050F22", "#0C1E3A", "#112A4D", "#00B8FF", "#F5F9FF", "#97AECA", "#27D282", "#F44C58")),
         AppTheme("Terang Bersih", false, listOf("#F3F6FB", "#FFFFFF", "#E3EAF4", "#0B7BEA", "#101828", "#667085", "#12A15F", "#E5384A")),
         AppTheme("Sporty Oranye", true, listOf("#120B08", "#221510", "#33201A", "#FF6B1A", "#FFF4EC", "#C9A58F", "#2ED47A", "#FF3D3D")),
         AppTheme("Hutan Hijau", true, listOf("#07140E", "#0F2419", "#173A28", "#34D399", "#ECFDF5", "#8DB8A4", "#A3E635", "#F87171")),
@@ -33,12 +34,25 @@ object Themes {
         AppTheme("Pink Pastel", false, listOf("#FFF5F8", "#FFFFFF", "#FCE4EC", "#E91E63", "#2B1B22", "#8A6F7A", "#16A34A", "#DC2626"))
     )
 
+    private val targets = intArrayOf(1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 40, 50, 75, 100)
+
     private fun p(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
     fun index(c: Context) = p(c).getInt("theme", 0).coerceIn(0, all.size - 1)
     fun current(c: Context) = all[index(c)]
     fun save(c: Context, i: Int) = p(c).edit().putInt("theme", i).apply()
     fun keepOn(c: Context) = p(c).getBoolean("keep_on", true)
     fun setKeepOn(c: Context, v: Boolean) = p(c).edit().putBoolean("keep_on", v).apply()
+
+    fun target(c: Context) = p(c).getInt("target_km", 10)
+    fun stepTarget(c: Context, dir: Int) {
+        val cur = target(c)
+        val n = if (dir > 0) targets.firstOrNull { it > cur } else targets.lastOrNull { it < cur }
+        if (n != null) p(c).edit().putInt("target_km", n).apply()
+    }
+
+    fun weight(c: Context) = p(c).getInt("weight_kg", 65)
+    fun stepWeight(c: Context, dir: Int) =
+        p(c).edit().putInt("weight_kg", (weight(c) + dir).coerceIn(30, 200)).apply()
 
     @Suppress("DEPRECATION")
     fun styleWindow(a: Activity, t: AppTheme) {
