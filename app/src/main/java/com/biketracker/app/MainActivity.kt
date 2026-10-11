@@ -26,7 +26,8 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Satu baris riwayat. Format: tanggal|mode|km|durasiMs|rata2|maks|targetKm|rute|kkal|tanjakan */
+/** Satu baris riwayat. Format: tanggal|mode|km|durasiMs|rata2|maks|target|rute|kkal|tanjakan
+ *  target: km (Sepeda/Lari) atau langkah (Jalan; data lama Jalan memakai km). */
 internal class Rec(val f: List<String>) {
     val date get() = f[0]
     val mode get() = f[1]
@@ -34,8 +35,14 @@ internal class Rec(val f: List<String>) {
     val elapsed get() = f[3].toLongOrNull() ?: 0L
     val avg get() = f[4]
     val target get() = f.getOrNull(6)?.toFloatOrNull() ?: 0f
-    val reached get() = target > 0f && km >= target
     val maxSpeed get() = f.getOrNull(5) ?: "0.0"
+    val avgF get() = avg.toFloatOrNull() ?: 0f
+    val maxF get() = maxSpeed.toFloatOrNull() ?: 0f
+    val steps get() = (km * 1000f * TrackerState.STEPS_PER_METER).roundToInt()
+    val paceSec: Int? get() = if (km > 0.05f && elapsed > 0L) ((elapsed / 1000f) / km).roundToInt() else null
+    private val stepTarget get() = mode == "Jalan" && target >= 100f
+    val reached get() = target > 0f && (if (stepTarget) steps >= target else km >= target)
+    val targetText get() = if (stepTarget) Fmt.int(target.toInt()) + " langkah" else target.toInt().toString() + " km"
     val kcal get() = f.getOrNull(8) ?: "0"
     val climb get() = f.getOrNull(9) ?: "0"
     val route: List<DoubleArray> by lazy {
@@ -61,6 +68,9 @@ class MainActivity : Activity() {
     private var inDetail = false
     private var pendingResume = false
     private var splashDone = false
+    private var homePage = 0
+    private var trackPage = 0
+    private val modes = listOf("Sepeda", "Lari", "Jalan")
 
     // Status pelacakan disimpan di TrackerState supaya tetap hidup bersama TrackingService.
     private val running get() = TrackerState.running
@@ -69,23 +79,36 @@ class MainActivity : Activity() {
     private val speedKmh get() = TrackerState.speedKmh
     private val maxSpeedKmh get() = TrackerState.maxSpeedKmh
     private val climbM get() = TrackerState.climbM
-    private val targetKm get() = TrackerState.targetKm
     private val gpsStatus get() = TrackerState.gpsStatus
     private val route get() = TrackerState.route
 
-    private lateinit var gauge: GaugeView
-    private lateinit var routeView: RouteView
-    private lateinit var targetBar: SegBar
-    private lateinit var targetValue: TextView
-    private lateinit var targetPct: TextView
-    private lateinit var targetInfo: TextView
-    private lateinit var gpsText: TextView
-    private lateinit var distanceText: TextView
-    private lateinit var timeText: TextView
-    private lateinit var avgText: TextView
-    private lateinit var maxText: TextView
-    private lateinit var kcalText: TextView
-    private lateinit var climbText: TextView
+    // View layar tracking. Sebagian hanya ada di mode tertentu, jadi dibuat nullable.
+    private var gauge: GaugeView? = null
+    private var ring: RingView? = null
+    private var targetBar: SegBar? = null
+    private var targetValue: TextView? = null
+    private var targetPct: TextView? = null
+    private var targetInfo: TextView? = null
+    private var gpsText: TextView? = null
+    private var distanceText: TextView? = null
+    private var timeText: TextView? = null
+    private var avgText: TextView? = null
+    private var maxText: TextView? = null
+    private var kcalText: TextView? = null
+    private var climbText: TextView? = null
+    private var speedText: TextView? = null
+    private var cadenceText: TextView? = null
+    private var paceNowText: TextView? = null
+    private var paceAvgText: TextView? = null
+    private var paceBestText: TextView? = null
+    private var ringInfo: TextView? = null
+    private var splitsBox: LinearLayout? = null
+    private var trackRoute: RouteView? = null
+    private var routeDistText: TextView? = null
+    private var routeTimeText: TextView? = null
+    private var chart: ChartView? = null
+    private var chartAvgText: TextView? = null
+    private var chartMaxText: TextView? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("bike_history", MODE_PRIVATE) }
@@ -159,7 +182,7 @@ class MainActivity : Activity() {
             .setTitle("Aktivitas belum selesai")
             .setMessage("Ada perjalanan yang belum disimpan karena aplikasi sempat tertutup. Lanjutkan?")
             .setPositiveButton("Lanjutkan") { _, _ ->
-                if (TrackerState.restore(this)) showTracking() else TrackerState.clearSaved(this)
+                if (TrackerState.restore(this)) { trackPage = 0; showTracking() } else TrackerState.clearSaved(this)
             }
             .setNegativeButton("Buang") { _, _ -> TrackerState.clearSaved(this) }
             .setCancelable(false)
@@ -170,6 +193,10 @@ class MainActivity : Activity() {
         t = Themes.current(this)
         Themes.styleWindow(this, t)
     }
+
+    private fun acc(m: String = mode) = Themes.modeAccent(m)
+
+    private fun dim(c: Int) = (c and 0x00FFFFFF) or 0x66000000
 
     private fun scaleFor(m: String) = when (m) { "Sepeda" -> 60f; "Lari" -> 30f; else -> 12f }
 
@@ -289,7 +316,10 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
     }
 
-    private fun stepper(label: String, sub: String, value: String, minus: () -> Unit, plus: () -> Unit): LinearLayout {
+    private fun stepper(
+        label: String, sub: String, value: String, minus: () -> Unit, plus: () -> Unit,
+        color: Int = t.accent
+    ): LinearLayout {
         val row = card(t.surface, 12, 16).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -299,7 +329,7 @@ class MainActivity : Activity() {
         left.add(tv(sub, 11f, t.muted), 2)
         row.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(circleBtn("−", minus))
-        row.addView(mono(tv(value, 16f, t.accent, true)).apply {
+        row.addView(mono(tv(value, 16f, color, true)).apply {
             gravity = Gravity.CENTER; setPadding(dp(10), 0, dp(10), 0)
         })
         row.addView(circleBtn("+", plus))
@@ -325,7 +355,7 @@ class MainActivity : Activity() {
         prefs.edit().putString("records", list.joinToString("\n")).apply()
     }
 
-    private fun weekData(): Pair<FloatArray, List<Rec>> {
+    private fun weekData(m: String): Pair<FloatArray, List<Rec>> {
         val out = FloatArray(7)
         val week = mutableListOf<Rec>()
         val cal = Calendar.getInstance()
@@ -336,35 +366,48 @@ class MainActivity : Activity() {
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
         val start = cal.timeInMillis
-        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
         val c2 = Calendar.getInstance()
         for (line in rawRecords()) {
             val r = parse(line) ?: continue
+            if (r.mode != m) continue
             val d = (try { fmt.parse(r.date) } catch (e: Exception) { null }) ?: continue
             if (d.time < start) continue
             c2.time = d
-            out[(c2.get(Calendar.DAY_OF_WEEK) + 5) % 7] += r.km
+            out[(c2.get(Calendar.DAY_OF_WEEK) + 5) % 7] += if (m == "Jalan") r.steps.toFloat() else r.km
             week.add(r)
         }
         return Pair(out, week)
     }
 
+    /** Angka pendamping di kartu perjalanan, sesuai fungsi tiap aktivitas. */
+    private fun secondary(rec: Rec): String = when (rec.mode) {
+        "Lari" -> Fmt.pace(rec.paceSec) + " /km"
+        "Jalan" -> Fmt.int(rec.steps) + " langkah"
+        else -> Fmt.dec(rec.avgF, 1) + " km/jam"
+    }
+
     private fun tripCard(rec: Rec, detailed: Boolean, onClick: (() -> Unit)? = null, onLong: (() -> Unit)? = null): LinearLayout {
+        val a = acc(rec.mode)
         val c = card(t.surface, 10, 16).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        c.addView(RouteView(this, t, true).apply { points = rec.route }, LinearLayout.LayoutParams(dp(64), dp(48)))
+        c.addView(RouteView(this, t, true).apply { points = rec.route; accent = a }, LinearLayout.LayoutParams(dp(64), dp(48)))
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         mid.addView(tv("${icon(rec.mode)}  ${rec.mode}", 13f, t.text, true))
         mid.add(tv(rec.date, 11f, t.muted), 2)
-        if (detailed) mid.add(tv("${formatTime(rec.elapsed)} • ${rec.avg} km/jam", 11f, t.muted), 2)
+        if (detailed) mid.add(tv("${formatTime(rec.elapsed)} • ${secondary(rec)}", 11f, t.muted), 2)
         c.addView(mid, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
         val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
-        right.addView(tv(String.format(Locale.US, "%.2f km", rec.km), 16f, t.accent, true))
-        if (detailed && rec.target > 0f) {
-            right.add(tv(if (rec.reached) "✓ Target tercapai" else "Target belum", 11f,
-                if (rec.reached) t.good else t.muted), 2)
+        right.addView(tv(Fmt.dec(rec.km, 2) + " km", 16f, a, true))
+        if (detailed) {
+            if (rec.target > 0f) {
+                right.add(tv(if (rec.reached) "✓ Target tercapai" else "Target belum", 11f,
+                    if (rec.reached) t.good else t.muted), 2)
+            }
+        } else {
+            right.add(tv(secondary(rec), 11f, t.muted), 2)
         }
         c.addView(right)
         if (onClick != null) c.setOnClickListener { onClick() }
@@ -373,27 +416,114 @@ class MainActivity : Activity() {
     }
 
     // ---------- Screens ----------
-    private fun showHome() {
-        val r = column()
-        title(r, "R I D E T R A C K   P R O", "Siap gowes hari ini?")
+    private fun greeting(m: String) = when (m) {
+        "Sepeda" -> "Siap gowes hari ini?"
+        "Lari" -> "Siap lari hari ini?"
+        else -> "Siap jalan hari ini?"
+    }
 
-        val (week, recs) = weekData()
+    private fun startLabel(m: String) = when (m) { "Sepeda" -> "BERSEPEDA"; "Lari" -> "LARI"; else -> "JALAN" }
+
+    private fun targetSub(m: String) = when (m) {
+        "Sepeda" -> "Jarak per perjalanan"
+        "Lari" -> "Jarak per lari"
+        else -> "Langkah per hari"
+    }
+
+    /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
+    private fun showHome() {
+        currentTab = 0
+        inDetail = false
+        val w = resources.displayMetrics.widthPixels
+        homePage = modes.indexOf(mode).coerceAtLeast(0)
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(4))
+            setBackgroundColor(t.bg)
+        }
+        val small = tv("R I D E T R A C K   P R O", 11f, acc(), true)
+        val big = tv(greeting(mode), 24f, t.text, true)
+        header.addView(small)
+        header.add(big, 2)
+
+        val tabRow = LinearLayout(this).apply {
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = box(t.surface, 16, true)
+        }
+        val tabViews = ArrayList<TextView>()
+        lateinit var pager: PagerScroll
+
+        fun styleTab(v: TextView, selected: Boolean, m: String) {
+            val a = acc(m)
+            v.setTextColor(if (selected) onColor(a) else t.muted)
+            v.background = if (selected) box(a, 12) else null
+        }
+
+        fun applyPage(p: Int) {
+            homePage = p
+            val m = modes[p]
+            if (!running) mode = m
+            small.setTextColor(acc(m))
+            big.text = greeting(m)
+            tabViews.forEachIndexed { i, v -> styleTab(v, i == p, modes[i]) }
+        }
+
+        modes.forEachIndexed { i, m ->
+            val chip = tv(icon(m) + "  " + m, 13f, t.muted, true).apply {
+                gravity = Gravity.CENTER
+                setOnClickListener { if (!running) pager.goTo(i, true) }
+            }
+            styleTab(chip, i == homePage, m)
+            tabViews.add(chip)
+            tabRow.addView(chip, LinearLayout.LayoutParams(0, dp(44), 1f).apply { if (i > 0) leftMargin = dp(4) })
+        }
+        header.add(tabRow, 12)
+
+        pager = PagerScroll(this, w) { p -> applyPage(p) }
+        val strip = LinearLayout(this)
+        for (m in modes) strip.addView(homePageView(m), LinearLayout.LayoutParams(w, -1))
+        pager.addView(strip)
+
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(t.bg)
+            setOnApplyWindowInsetsListener { v, i ->
+                v.setPadding(0, i.systemWindowInsetTop, 0, i.systemWindowInsetBottom); i
+            }
+        }
+        outer.addView(header)
+        outer.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
+        outer.addView(navBar(0))
+        setContentView(outer)
+        outer.requestApplyInsets()
+        pager.post { pager.goTo(homePage, false) }
+    }
+
+    /** Isi satu halaman beranda untuk satu aktivitas. */
+    private fun homePageView(m: String): ScrollView {
+        val a = acc(m)
+        val r = column()
+        val (week, recs) = weekData(m)
+
         val wc = card(t.surface, 14, 18)
         val top = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         left.addView(tv("Minggu ini", 11f, t.muted))
-        left.addView(mono(tv(String.format(Locale.US, "%.1f km", week.sum()), 24f, t.accent, true)))
+        val total = week.sum()
+        val totalText = if (m == "Jalan") Fmt.int(total.roundToInt()) + " langkah" else Fmt.dec(total, 1) + " km"
+        left.addView(mono(tv(totalText, 24f, a, true)))
         top.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
-        val avgs = recs.mapNotNull { it.avg.toFloatOrNull() }
-        val avgTxt = if (avgs.isEmpty()) "0.0" else String.format(Locale.US, "%.1f", avgs.average())
-        top.addView(tv("${recs.size} perjalanan\nrata-rata $avgTxt km/jam", 11f, t.muted).apply {
-            gravity = Gravity.END
-        })
+        val countText = when (m) {
+            "Sepeda" -> "${recs.size} perjalanan"
+            "Lari" -> "${recs.size} kali lari"
+            else -> "${week.count { it > 0f }} hari berjalan"
+        }
+        top.addView(tv(countText, 11f, t.muted).apply { gravity = Gravity.END })
         wc.addView(top)
 
-        val maxKm = maxOf(week.maxOrNull() ?: 0f, 1f)
+        val maxV = maxOf(week.maxOrNull() ?: 0f, 1f)
         val today = (Calendar.getInstance().get(Calendar.DAY_OF_WEEK) + 5) % 7
-        val dim = (t.accent and 0x00FFFFFF) or 0x66000000
         val dayNames = listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min")
         val bars = LinearLayout(this)
         for (i in 0..6) {
@@ -401,42 +531,60 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             }
-            val h = if (week[i] > 0f) maxOf(dp(4), (week[i] / maxKm * dp(44)).toInt()) else dp(3)
-            val barColor = if (i == today) t.accent else if (week[i] > 0f) dim else t.surface2
+            val h = if (week[i] > 0f) maxOf(dp(4), (week[i] / maxV * dp(44)).toInt()) else dp(3)
+            val barColor = if (i == today) a else if (week[i] > 0f) dim(a) else t.surface2
             col.addView(View(this).apply { background = box(barColor, 4) }, LinearLayout.LayoutParams(-1, h))
-            col.addView(tv(dayNames[i], 11f, if (i == today) t.accent else t.muted).apply {
+            col.addView(tv(dayNames[i], 11f, if (i == today) a else t.muted).apply {
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
             bars.addView(col, LinearLayout.LayoutParams(0, dp(68), 1f).apply { if (i > 0) leftMargin = dp(6) })
         }
         wc.add(bars, 10)
-        r.add(wc, 14)
+        r.add(wc, 6)
 
-        val chips = LinearLayout(this)
-        listOf("Sepeda", "Lari", "Jalan").forEachIndexed { i, m ->
-            val sel = m == mode
-            val chip = tv(icon(m) + "  " + m, 13f, if (sel) onColor(t.accent) else t.text, true).apply {
-                gravity = Gravity.CENTER
-                background = box(if (sel) t.accent else t.surface, 14, !sel)
-                setOnClickListener { if (!running) { mode = m; showHome() } }
+        val totalKm = recs.sumOf { it.km.toDouble() }.toFloat()
+        val totalMs = recs.sumOf { it.elapsed }
+        val hours = totalMs / 3600000f
+        val metrics = when (m) {
+            "Sepeda" -> Pair(
+                statCard("Kecepatan rata-rata",
+                    if (hours > 0f) Fmt.dec(totalKm / hours, 1) + " km/jam" else "0 km/jam"),
+                statCard("Tanjakan minggu ini",
+                    recs.sumOf { (it.climb.toFloatOrNull() ?: 0f).toDouble() }.roundToInt().toString() + " m")
+            )
+            "Lari" -> Pair(
+                statCard("Pace rata-rata",
+                    if (totalKm > 0.05f) Fmt.pace(((totalMs / 1000f) / totalKm).roundToInt()) + " /km" else "--:-- /km"),
+                statCard("Terjauh minggu ini", Fmt.dec(recs.maxOfOrNull { it.km } ?: 0f, 1) + " km")
+            )
+            else -> {
+                val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                val todaySteps = recs.filter { it.date.startsWith(todayStr) }.sumOf { it.steps }
+                Pair(
+                    statCard("Langkah hari ini", Fmt.int(todaySteps), a),
+                    statCard("Durasi minggu ini", Fmt.hm(totalMs))
+                )
             }
-            chips.addView(chip, LinearLayout.LayoutParams(0, dp(48), 1f).apply { if (i > 0) leftMargin = dp(8) })
         }
-        r.add(chips, 12)
+        statRow(r, metrics.first, metrics.second, 10)
 
-        r.add(stepper("◎ Target hari ini", "Tampil di layar tracking",
-            "${Themes.target(this)} km",
-            { Themes.stepTarget(this, -1); showHome() },
-            { Themes.stepTarget(this, 1); showHome() }), 12)
+        r.add(stepper("◎ Target hari ini", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
+            { Themes.stepTarget(this, m, -1); showHome() },
+            { Themes.stepTarget(this, m, 1); showHome() }, a), 10)
 
-        r.add(btn("▶   MULAI AKTIVITAS", t.good, 30) { startTracking() }, 12, 0f, dp(58))
+        r.add(btn("▶   MULAI " + startLabel(m), a, 30) { startTracking(m) }, 10, 0f, dp(58))
 
-        val last = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }.take(2)
+        val last = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }
+            .filter { it.second.mode == m }.take(2)
         if (last.isNotEmpty()) {
-            r.add(tv("Terakhir", 11f, t.muted, true), 16)
+            r.add(tv("Terakhir · $m", 11f, t.muted, true), 16)
             for ((idx, rec) in last) r.add(tripCard(rec, false, { showDetail(idx, rec) }), 8)
         }
-        show(0, r)
+        return ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(t.bg)
+            addView(r)
+        }
     }
 
     private fun hasFine() =
@@ -478,13 +626,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun startTracking() {
+    private fun startTracking(m: String = mode) {
+        if (running) return
+        mode = m
+        trackPage = 0
         if (!hasFine()) {
             pendingResume = false
             askPermissions()
             return
         }
-        TrackerState.start(Themes.target(this))
+        TrackerState.start(Themes.target(this, mode))
         TrackerState.persist(this)
         sendService(TrackingService.ACTION_START)
         showTracking()
@@ -509,72 +660,320 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showTracking() {
-        val r = column()
+    private fun resetTrackViews() {
+        gauge = null; ring = null; targetBar = null; targetValue = null; targetPct = null
+        targetInfo = null; gpsText = null; distanceText = null; timeText = null; avgText = null
+        maxText = null; kcalText = null; climbText = null; speedText = null; cadenceText = null
+        paceNowText = null; paceAvgText = null; paceBestText = null; ringInfo = null; splitsBox = null
+        trackRoute = null; routeDistText = null; routeTimeText = null
+        chart = null; chartAvgText = null; chartMaxText = null
+    }
 
-        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        top.addView(tv("⌖", 22f, t.muted).apply {
-            setPadding(dp(2), dp(4), dp(10), dp(4)); setOnClickListener { openMap() }
-        })
-        val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        for ((i, name) in listOf("Analog", "Digital").withIndex()) {
-            val sel = (i == 1) == digitalMode
-            tabs.addView(tv(name, 15f, if (sel) t.accent else t.muted, sel).apply {
-                setPadding(dp(14), dp(4), dp(14), dp(4))
-                if (sel) paint.isUnderlineText = true
-                setOnClickListener { digitalMode = i == 1; showTracking() }
-            })
+    private fun trackScroll(col: LinearLayout) = ScrollView(this).apply {
+        isFillViewport = true
+        setBackgroundColor(t.bg)
+        addView(col)
+    }
+
+    /** Halaman "Rute": jalur GPS besar (tanpa internet) + tombol ke peta lengkap. */
+    private fun buildRoutePage(a: Int): LinearLayout {
+        val col = column()
+        val rv = RouteView(this, t).apply {
+            accent = a
+            hint = "Menunggu sinyal GPS…"
+            minimumHeight = dp(280)
         }
-        top.addView(tabs, LinearLayout.LayoutParams(0, -2, 1f))
-        gpsText = tv(gpsStatus, 11f, t.good, true).apply { gravity = Gravity.END }
-        top.addView(gpsText)
-        r.addView(top)
+        trackRoute = rv
+        col.addView(rv, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(6) })
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        routeDistText = disC.second
+        routeTimeText = timC.second
+        statRow(col, disC, timC, 10)
+        col.add(btn("⌖   BUKA PETA LENGKAP", t.surface) { openMap() }, 10, 0f, dp(48))
+        return col
+    }
 
-        routeView = RouteView(this, t).apply { setOnClickListener { openMap() } }
-        r.add(routeView, 10, 0f, dp(90))
+    /** Halaman "Grafik": kecepatan (atau pace untuk Lari) sepanjang aktivitas. */
+    private fun buildChartPage(m: String, a: Int): LinearLayout {
+        val col = column()
+        val cc = card(t.surface, 12, 16)
+        cc.addView(tv(if (m == "Lari") "Grafik pace (menit/km)" else "Grafik kecepatan (km/jam)", 12f, t.muted))
+        val ch = ChartView(this, t, a)
+        if (m == "Lari") {
+            ch.label = { v -> if (v < 1.5f) "" else Fmt.pace((3600f / v).roundToInt()) }
+        }
+        chart = ch
+        cc.add(ch, 8, 0f, dp(240))
+        col.add(cc, 6)
 
-        gauge = GaugeView(this, t).apply { scaleMax = scaleFor(mode); digital = digitalMode }
-        r.add(gauge, 6)
+        val avgLabel = if (m == "Lari") "Pace rata-rata" else "Rata-rata"
+        val maxLabel = when (m) { "Lari" -> "Split terbaik"; "Jalan" -> "Irama"; else -> "Maksimum" }
+        val avgC = statCard(avgLabel, "--", t.good)
+        val maxC = statCard(maxLabel, "--", a)
+        chartAvgText = avgC.second
+        chartMaxText = maxC.second
+        statRow(col, avgC, maxC, 10)
+        return col
+    }
+
+    /**
+     * Layar tracking, tiga halaman yang digeser ke samping: Utama (berbeda tiap aktivitas),
+     * Rute, dan Grafik. Tombol SELESAI/JEDA tetap di bawah.
+     */
+    private fun showTracking() {
+        resetTrackViews()
+        currentTab = -1
+        inDetail = false
+        val m = mode
+        val a = acc(m)
+        val w = resources.displayMetrics.widthPixels
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), 0)
+            setBackgroundColor(t.bg)
+        }
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        top.addView(tv(icon(m) + "  " + m, 14f, a, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(16), 0, dp(16), 0)
+            background = box((a and 0x00FFFFFF) or 0x26000000, 22)
+        }, LinearLayout.LayoutParams(-2, dp(44)))
+        val gps = tv(gpsStatus, 11f, t.good, true).apply { gravity = Gravity.CENTER }
+        gpsText = gps
+        top.addView(gps, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(tv("⌖", 20f, t.text).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
+            setOnClickListener { openMap() }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        header.addView(top)
+
+        val tabViews = ArrayList<TextView>()
+        lateinit var pager: PagerScroll
+        fun styleTab(v: TextView, selected: Boolean) {
+            v.setTextColor(if (selected) a else t.muted)
+            v.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            v.paint.isUnderlineText = selected
+        }
+        val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        listOf("Utama", "Rute", "Grafik").forEachIndexed { i, name ->
+            val v = tv(name, 14f, t.muted).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(10), dp(16), dp(6))
+                setOnClickListener { pager.goTo(i, true) }
+            }
+            styleTab(v, i == trackPage)
+            tabViews.add(v)
+            tabRow.addView(v)
+        }
+        header.add(tabRow, 4)
+
+        pager = PagerScroll(this, w) { p ->
+            trackPage = p
+            tabViews.forEachIndexed { i, v -> styleTab(v, i == p) }
+        }
+        val main = column()
+        when (m) {
+            "Lari" -> buildRunBody(main, a)
+            "Jalan" -> buildWalkBody(main, a)
+            else -> buildBikeBody(main, a)
+        }
+        val strip = LinearLayout(this)
+        strip.addView(trackScroll(main), LinearLayout.LayoutParams(w, -1))
+        strip.addView(trackScroll(buildRoutePage(a)), LinearLayout.LayoutParams(w, -1))
+        strip.addView(trackScroll(buildChartPage(m, a)), LinearLayout.LayoutParams(w, -1))
+        pager.addView(strip)
+
+        val row = LinearLayout(this).apply {
+            setPadding(dp(20), dp(10), dp(20), dp(16))
+            setBackgroundColor(t.bg)
+        }
+        row.addView(btn("SELESAI", t.bad, 28) { finishTracking() }, LinearLayout.LayoutParams(0, dp(54), 1f))
+        row.addView(btn(if (paused) "LANJUT" else "JEDA", a, 28) {
+            if (paused) resumeTracking() else pauseTracking()
+        }, LinearLayout.LayoutParams(0, dp(54), 1f).apply { leftMargin = dp(10) })
+
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(t.bg)
+            setOnApplyWindowInsetsListener { v, i ->
+                v.setPadding(0, i.systemWindowInsetTop, 0, i.systemWindowInsetBottom); i
+            }
+        }
+        outer.addView(header)
+        outer.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
+        outer.addView(row)
+        setContentView(outer)
+        outer.requestApplyInsets()
+        pager.post { pager.goTo(trackPage, false) }
+        refreshTracking()
+    }
+
+    /** Sepeda: speedometer besar (ketuk untuk analog/digital), target jarak, enam statistik. */
+    private fun buildBikeBody(r: LinearLayout, a: Int) {
+        val g = GaugeView(this, t).apply {
+            scaleMax = scaleFor("Sepeda")
+            digital = digitalMode
+            accent = a
+            setOnClickListener { digitalMode = !digitalMode; digital = digitalMode; invalidate() }
+        }
+        gauge = g
+        r.add(g, 6)
 
         val tc = card(t.surface, 12, 16)
         val head = LinearLayout(this)
-        val what = when (mode) { "Sepeda" -> "bersepeda"; "Lari" -> "lari"; else -> "jalan" }
-        head.addView(tv("◎ Target $what", 12f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
-        targetPct = tv("0%", 12f, t.good, true)
-        head.addView(targetPct)
+        head.addView(tv("◎ Target bersepeda", 12f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 12f, t.good, true)
+        targetPct = pct
+        head.addView(pct)
         tc.addView(head)
         val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
-        targetValue = mono(tv("0.00", 22f, t.accent, true))
-        vrow.addView(targetValue)
-        vrow.addView(tv("  / $targetKm km", 13f, t.muted))
+        val value = mono(tv("0,00", 22f, a, true))
+        targetValue = value
+        vrow.addView(value)
+        vrow.addView(tv("  / ${TrackerState.target} km", 13f, t.muted))
         tc.add(vrow, 4)
-        targetBar = SegBar(this, t)
-        tc.add(targetBar, 8, 0f, dp(10))
-        targetInfo = tv("", 11f, t.muted)
-        tc.add(targetInfo, 6)
+        val bar = SegBar(this, t).apply { color = a }
+        targetBar = bar
+        tc.add(bar, 8, 0f, dp(10))
+        val info = tv("", 11f, t.muted)
+        targetInfo = info
+        tc.add(info, 6)
         r.add(tc, 4)
 
-        val maxC = statCard("Kecepatan maks.", "0.0 km/jam", t.accent)
-        val avgC = statCard("Rata-rata", "0.0 km/jam", t.good)
-        val disC = statCard("Jarak", "0.00 km")
+        val maxC = statCard("Kecepatan maks.", "0,0 km/jam", a)
+        val avgC = statCard("Rata-rata", "0,0 km/jam", t.good)
+        val disC = statCard("Jarak", "0,00 km")
         val timC = statCard("Durasi", "00:00:00")
-        val kalC = statCard("Kalori", "0 kkal")
         val clmC = statCard("Tanjakan", "0 m")
+        val kalC = statCard("Kalori", "0 kkal")
         maxText = maxC.second; avgText = avgC.second; distanceText = disC.second
-        timeText = timC.second; kcalText = kalC.second; climbText = clmC.second
+        timeText = timC.second; climbText = clmC.second; kcalText = kalC.second
         statRow(r, maxC, avgC, 10)
         statRow(r, disC, timC)
+        statRow(r, clmC, kalC)
+    }
+
+    /** Lari: pace sebagai angka utama, split per km, target jarak. */
+    private fun buildRunBody(r: LinearLayout, a: Int) {
+        val hero = card(t.surface, 16, 22).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        hero.addView(tv("PACE SAAT INI", 11f, t.muted, true).apply {
+            gravity = Gravity.CENTER
+            letterSpacing = 0.16f
+        })
+        val pn = mono(tv("--:--", 64f, a, true)).apply { gravity = Gravity.CENTER }
+        paceNowText = pn
+        val prow = LinearLayout(this).apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM }
+        prow.addView(pn)
+        prow.addView(tv(" /km", 16f, t.muted, true).apply { setPadding(0, 0, 0, dp(10)) })
+        hero.addView(prow)
+        val sub = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        val pa = tv("", 13f, t.muted)
+        val pb = tv("", 13f, t.muted)
+        paceAvgText = pa
+        paceBestText = pb
+        sub.addView(pa)
+        sub.addView(pb, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(18) })
+        hero.add(sub, 4)
+        r.add(hero, 10)
+
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        disC.second.textSize = 26f
+        timC.second.textSize = 26f
+        distanceText = disC.second
+        timeText = timC.second
+        statRow(r, disC, timC, 8)
+
+        val sc = card(t.surface, 12, 16)
+        val sh = LinearLayout(this)
+        sh.addView(tv("Split per km", 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        sh.addView(tv("pace /km", 11f, t.muted))
+        sc.addView(sh)
+        val sb = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        splitsBox = sb
+        sc.add(sb, 2)
+        r.add(sc, 8)
+
+        val tc = card(t.surface, 12, 16)
+        val head = LinearLayout(this)
+        val label = tv("", 12f, t.muted)
+        targetInfo = label
+        head.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 12f, t.good, true)
+        targetPct = pct
+        head.addView(pct)
+        tc.addView(head)
+        val bar = SegBar(this, t).apply { color = a }
+        targetBar = bar
+        tc.add(bar, 8, 0f, dp(10))
+        r.add(tc, 8)
+
+        val spC = statCard("Kecepatan", "0,0 km/jam")
+        val kalC = statCard("Kalori", "0 kkal")
+        speedText = spC.second
+        kcalText = kalC.second
+        statRow(r, spC, kalC, 8)
+    }
+
+    /** Jalan: cincin langkah menuju target harian (langkah diperkirakan dari jarak GPS). */
+    private fun buildWalkBody(r: LinearLayout, a: Int) {
+        val rc = card(t.surface, 16, 22).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        val rv = RingView(this, t, a)
+        ring = rv
+        rc.addView(rv, LinearLayout.LayoutParams(dp(230), dp(230)))
+        val ri = tv("", 13f, t.muted).apply { gravity = Gravity.CENTER }
+        ringInfo = ri
+        rc.add(ri, 8)
+        r.add(rc, 10)
+
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        val avgC = statCard("Rata-rata", "0,0 km/jam")
+        val cadC = statCard("Irama", "0 langkah/mnt")
+        val kalC = statCard("Kalori", "0 kkal")
+        val clmC = statCard("Tanjakan", "0 m")
+        distanceText = disC.second; timeText = timC.second; avgText = avgC.second
+        cadenceText = cadC.second; kcalText = kalC.second; climbText = clmC.second
+        statRow(r, disC, timC, 8)
+        statRow(r, avgC, cadC)
         statRow(r, kalC, clmC)
+    }
 
-        val row = LinearLayout(this)
-        row.addView(btn("SELESAI", t.bad, 28) { finishTracking() }, LinearLayout.LayoutParams(0, dp(54), 1f))
-        row.addView(btn(if (paused) "LANJUT" else "JEDA", t.accent, 28) {
-            if (paused) resumeTracking() else pauseTracking()
-        }, LinearLayout.LayoutParams(0, dp(54), 1f).apply { leftMargin = dp(10) })
-        r.add(row, 14)
+    private fun splitRow(
+        container: LinearLayout, label: String, frac: Float, barColor: Int,
+        right: String, highlight: Boolean, a: Int
+    ) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(tv(label, 12f, if (highlight) a else t.muted, highlight), LinearLayout.LayoutParams(dp(46), -2))
+        val bar = LinearLayout(this).apply { background = box(t.surface2, 6) }
+        val f = frac.coerceIn(0f, 1f)
+        bar.addView(View(this).apply { background = box(barColor, 6) }, LinearLayout.LayoutParams(0, -1, f))
+        bar.addView(View(this), LinearLayout.LayoutParams(0, -1, 1f - f))
+        row.addView(bar, LinearLayout.LayoutParams(0, dp(12), 1f))
+        row.addView(mono(tv(right, 14f, if (highlight) a else t.text, true)).apply {
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(dp(64), -2).apply { leftMargin = dp(10) })
+        container.add(row, 6)
+    }
 
-        show(-1, r)
-        refreshTracking()
+    /** Tiga km terakhir yang selesai + km yang sedang berjalan. Pace lebih cepat = batang lebih panjang. */
+    private fun fillSplits(container: LinearLayout, a: Int) {
+        container.removeAllViews()
+        val sp = TrackerState.splits
+        val fast = sp.minOrNull()
+        val slow = sp.maxOrNull()
+        for (i in maxOf(0, sp.size - 3) until sp.size) {
+            val s = sp[i]
+            val f = if (fast == null || slow == null || fast == slow) 0.9f
+            else 0.5f + 0.5f * (slow - s).toFloat() / (slow - fast).toFloat()
+            val best = sp.size > 1 && s == fast
+            splitRow(container, "Km ${i + 1}", f, if (best) a else dim(a), Fmt.pace(s), best, a)
+        }
+        val rem = (distanceMeters % 1000f) / 1000f
+        splitRow(container, "Km ${sp.size + 1}", rem, dim(a), Fmt.dec(rem, 2) + " km", false, a)
     }
 
     private fun currentElapsed(): Long = TrackerState.currentElapsed()
@@ -589,35 +988,82 @@ class MainActivity : Activity() {
     private fun calories(): Int = TrackerState.calories(Themes.weight(this))
 
     private fun refreshTracking() {
-        if (!::gauge.isInitialized || !::targetBar.isInitialized) return
-        if (::gpsText.isInitialized) gpsText.text = gpsStatus
+        if (distanceText == null) return
+        gpsText?.text = gpsStatus
         val km = distanceMeters / 1000f
-        gauge.speed = speedKmh
-        gauge.maxSpeed = maxSpeedKmh
-        gauge.invalidate()
-        routeView.points = route.toList()
-        routeView.invalidate()
+        val target = TrackerState.target
+        val frac = (TrackerState.progressValue() / target).coerceIn(0f, 1f)
+        val pct = "${(frac * 100).toInt()}%"
 
-        distanceText.text = String.format(Locale.US, "%.2f km", km)
-        timeText.text = formatTime(currentElapsed())
-        avgText.text = String.format(Locale.US, "%.1f km/jam", averageSpeed())
-        maxText.text = String.format(Locale.US, "%.1f km/jam", maxSpeedKmh)
-        kcalText.text = "${calories()} kkal"
-        climbText.text = "${climbM.roundToInt()} m"
+        distanceText?.text = Fmt.dec(km, 2) + " km"
+        timeText?.text = Fmt.time(currentElapsed())
+        kcalText?.text = "${calories()} kkal"
+        climbText?.text = "${climbM.roundToInt()} m"
+        targetBar?.let { it.fraction = frac; it.invalidate() }
+        targetPct?.text = pct
 
-        val frac = (km / targetKm).coerceIn(0f, 1f)
-        targetBar.fraction = frac
-        targetBar.invalidate()
-        targetValue.text = String.format(Locale.US, "%.2f", km)
-        targetPct.text = "${(frac * 100).toInt()}%"
-        if (km >= targetKm) {
-            targetInfo.text = "✓ Target tercapai, kerja bagus!"
-        } else {
-            val remain = targetKm - km
-            val avg = averageSpeed()
-            val eta = if (avg > 1f) (remain / avg * 60f).roundToInt() else -1
-            targetInfo.text = String.format(Locale.US, "Sisa %.2f km", remain) +
-                if (eta >= 0) " • sekitar $eta menit lagi" else ""
+        trackRoute?.let { it.points = route.toList(); it.invalidate() }
+        routeDistText?.text = Fmt.dec(km, 2) + " km"
+        routeTimeText?.text = Fmt.time(currentElapsed())
+        chart?.let {
+            it.values = TrackerState.speedSamples.toList()
+            it.minutes = TrackerState.chartMinutes()
+            it.invalidate()
+        }
+
+        when (mode) {
+            "Lari" -> {
+                paceNowText?.text = Fmt.pace(TrackerState.paceNowSec())
+                paceAvgText?.text = "Rata-rata " + Fmt.pace(TrackerState.avgPaceSec())
+                paceBestText?.text = "Split terbaik " + Fmt.pace(TrackerState.bestSplitSec())
+                speedText?.text = Fmt.dec(speedKmh, 1) + " km/jam"
+                targetInfo?.text = "Target lari · " + Fmt.dec(km, 2) + " / " + target + " km"
+                splitsBox?.let { fillSplits(it, acc("Lari")) }
+                chartAvgText?.text = Fmt.pace(TrackerState.avgPaceSec()) + " /km"
+                chartMaxText?.text = Fmt.pace(TrackerState.bestSplitSec()) + " /km"
+            }
+            "Jalan" -> {
+                val steps = TrackerState.steps()
+                ring?.let {
+                    it.fraction = frac
+                    it.value = Fmt.int(steps)
+                    it.sub = "dari " + Fmt.int(target) + " · " + pct
+                    it.invalidate()
+                }
+                avgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                val mins = currentElapsed() / 60000f
+                val cadence = if (mins >= 0.5f) (steps / mins).roundToInt() else 0
+                cadenceText?.text = "$cadence langkah/mnt"
+                chartAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                chartMaxText?.text = "$cadence langkah/mnt"
+                ringInfo?.text = if (steps >= target) {
+                    "✓ Target tercapai, kerja bagus!"
+                } else {
+                    val remain = target - steps
+                    "Sisa " + Fmt.int(remain) + " langkah" +
+                        (if (cadence >= 30) " • sekitar " + (remain / cadence.toFloat()).roundToInt() + " menit lagi" else "")
+                }
+            }
+            else -> {
+                gauge?.let {
+                    it.speed = speedKmh
+                    it.maxSpeed = maxSpeedKmh
+                    it.invalidate()
+                }
+                avgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                maxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+                chartAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                chartMaxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+                targetValue?.text = Fmt.dec(km, 2)
+                targetInfo?.text = if (km >= target) {
+                    "✓ Target tercapai, kerja bagus!"
+                } else {
+                    val remain = target - km
+                    val avg = averageSpeed()
+                    val eta = if (avg > 1f) (remain / avg * 60f).roundToInt() else -1
+                    "Sisa " + Fmt.dec(remain, 2) + " km" + (if (eta >= 0) " • sekitar $eta menit lagi" else "")
+                }
+            }
         }
     }
 
@@ -701,14 +1147,14 @@ class MainActivity : Activity() {
     }
 
     private fun saveActivity(elapsed: Long) {
-        val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+        val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
         val record = listOf(
             date, mode,
             String.format(Locale.US, "%.3f", distanceMeters / 1000f),
             elapsed.toString(),
             String.format(Locale.US, "%.1f", averageSpeed()),
             String.format(Locale.US, "%.1f", maxSpeedKmh),
-            targetKm.toString(),
+            TrackerState.target.toString(),
             encodeRoute(),
             calories().toString(),
             climbM.roundToInt().toString()
@@ -719,34 +1165,52 @@ class MainActivity : Activity() {
     }
 
     private fun showSummary(elapsed: Long) {
+        val m = mode
+        val a = acc(m)
         val r = column()
         title(r, "RINGKASAN AKTIVITAS", "Kerja bagus! 🎉")
 
         val km = distanceMeters / 1000f
-        val hero = card(t.accent, 18, 24)
-        val on = onColor(t.accent)
+        val hero = card(a, 18, 24)
+        val on = onColor(a)
         hero.addView(tv("✓  PERJALANAN TERSIMPAN", 11f, on, true))
-        hero.add(tv("${icon(mode)}  $mode", 16f, on, true), 8)
-        hero.add(mono(tv(String.format(Locale.US, "%.2f km", km), 34f, on, true)), 2)
+        hero.add(tv("${icon(m)}  $m", 16f, on, true), 8)
+        val big = if (m == "Jalan") Fmt.int(TrackerState.steps()) + " langkah" else Fmt.dec(km, 2) + " km"
+        hero.add(mono(tv(big, 34f, on, true)), 2)
+        if (m == "Jalan") hero.add(tv(Fmt.dec(km, 2) + " km", 14f, on), 2)
         r.add(hero, 14)
 
-        r.add(RouteView(this, t).apply { points = route.toList(); hint = "Rute tidak terekam" }, 10, 0f, dp(130))
+        r.add(RouteView(this, t).apply {
+            points = route.toList(); hint = "Rute tidak terekam"; accent = a
+        }, 10, 0f, dp(130))
 
-        val reached = km >= targetKm
+        val target = TrackerState.target
+        val prog = TrackerState.progressValue()
+        val reached = prog >= target
+        val label = Themes.targetLabel(m, target) + if (m == "Jalan") " langkah" else ""
         val tc = card(t.surface, 12, 16)
-        tc.addView(tv(if (reached) "✓ Target $targetKm km tercapai" else
-            String.format(Locale.US, "Target %d km • tercapai %.0f%%", targetKm, km / targetKm * 100f),
+        tc.addView(tv(
+            if (reached) "✓ Target $label tercapai"
+            else "Target $label • tercapai ${(prog / target * 100f).roundToInt()}%",
             14f, if (reached) t.good else t.text, true))
         r.add(tc, 10)
 
-        statRow(r, statCard("Durasi", formatTime(elapsed)),
-            statCard("Rata-rata", String.format(Locale.US, "%.1f km/jam", averageSpeed()), t.good), 10)
-        statRow(r, statCard("Kecepatan maks.", String.format(Locale.US, "%.1f km/jam", maxSpeedKmh), t.accent),
-            statCard("Kalori", "${calories()} kkal"))
+        val avgCard = when (m) {
+            "Lari" -> statCard("Pace rata-rata", Fmt.pace(TrackerState.avgPaceSec()) + " /km", t.good)
+            "Jalan" -> statCard("Langkah", Fmt.int(TrackerState.steps()), t.good)
+            else -> statCard("Rata-rata", Fmt.dec(averageSpeed(), 1) + " km/jam", t.good)
+        }
+        statRow(r, statCard("Durasi", formatTime(elapsed)), avgCard, 10)
+        val peakCard = when (m) {
+            "Lari" -> statCard("Split terbaik", Fmt.pace(TrackerState.bestSplitSec()) + " /km", a)
+            "Jalan" -> statCard("Rata-rata", Fmt.dec(averageSpeed(), 1) + " km/jam", a)
+            else -> statCard("Kecepatan maks.", Fmt.dec(maxSpeedKmh, 1) + " km/jam", a)
+        }
+        statRow(r, peakCard, statCard("Kalori", "${calories()} kkal"))
         statRow(r, statCard("Tanjakan", "${climbM.roundToInt()} m"),
-            statCard("Jarak", String.format(Locale.US, "%.2f km", km)))
+            statCard("Jarak", Fmt.dec(km, 2) + " km"))
 
-        r.add(btn("⌂   KEMBALI KE BERANDA", t.good, 28) { showHome() }, 16, 0f, dp(54))
+        r.add(btn("⌂   KEMBALI KE BERANDA", a, 28) { showHome() }, 16, 0f, dp(54))
         r.add(btn("▤   LIHAT RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         show(0, r)
     }
@@ -763,7 +1227,7 @@ class MainActivity : Activity() {
             col.add(tv(value, 17f, color, true), 2)
             sc.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         }
-        cell("Total jarak", String.format(Locale.US, "%.1f km", all.sumOf { it.second.km.toDouble() }), t.accent)
+        cell("Total jarak", Fmt.dec(all.sumOf { it.second.km.toDouble() }, 1) + " km", t.accent)
         cell("Perjalanan", all.size.toString(), t.text)
         cell("Target tercapai", all.count { it.second.reached }.toString(), t.text)
         r.add(sc, 12)
@@ -811,39 +1275,54 @@ class MainActivity : Activity() {
     }
 
     private fun showDetail(idx: Int, rec: Rec) {
+        val a = acc(rec.mode)
         val r = column()
         title(r, "DETAIL AKTIVITAS", rec.date)
 
-        val hero = card(t.accent, 18, 24)
-        val on = onColor(t.accent)
+        val hero = card(a, 18, 24)
+        val on = onColor(a)
         hero.addView(tv("${icon(rec.mode)}  ${rec.mode}", 16f, on, true))
-        hero.add(mono(tv(String.format(Locale.US, "%.2f km", rec.km), 34f, on, true)), 2)
+        hero.add(mono(tv(Fmt.dec(rec.km, 2) + " km", 34f, on, true)), 2)
         r.add(hero, 14)
 
-        r.add(RouteView(this, t).apply { points = rec.route; hint = "Rute tidak terekam" }, 10, 0f, dp(150))
+        r.add(RouteView(this, t).apply {
+            points = rec.route; hint = "Rute tidak terekam"; accent = a
+        }, 10, 0f, dp(150))
 
         if (rec.target > 0f) {
             val tc = card(t.surface, 12, 16)
             tc.addView(tv(
-                if (rec.reached) "✓ Target ${rec.target.toInt()} km tercapai"
-                else "Target ${rec.target.toInt()} km belum tercapai",
+                if (rec.reached) "✓ Target ${rec.targetText} tercapai"
+                else "Target ${rec.targetText} belum tercapai",
                 14f, if (rec.reached) t.good else t.text, true))
             r.add(tc, 10)
         }
 
-        statRow(r, statCard("Durasi", formatTime(rec.elapsed)),
-            statCard("Rata-rata", "${rec.avg} km/jam", t.good), 10)
-        statRow(r, statCard("Kecepatan maks.", "${rec.maxSpeed} km/jam", t.accent),
+        val second = when (rec.mode) {
+            "Lari" -> statCard("Pace rata-rata", Fmt.pace(rec.paceSec) + " /km", t.good)
+            else -> statCard("Rata-rata", Fmt.dec(rec.avgF, 1) + " km/jam", t.good)
+        }
+        statRow(r, statCard("Durasi", formatTime(rec.elapsed)), second, 10)
+        statRow(r, statCard("Kecepatan maks.", Fmt.dec(rec.maxF, 1) + " km/jam", a),
             statCard("Kalori", "${rec.kcal} kkal"))
         statRow(r, statCard("Tanjakan", "${rec.climb} m"),
-            statCard("Titik rute", rec.route.size.toString()))
+            if (rec.mode == "Jalan") statCard("Langkah", Fmt.int(rec.steps))
+            else statCard("Titik rute", rec.route.size.toString()))
 
         if (rec.route.isNotEmpty()) {
-            r.add(btn("⌖   LIHAT DI PETA", t.good, 28) {
+            r.add(btn("⌖   LIHAT DI PETA", a, 28) {
                 val flat = DoubleArray(rec.route.size * 2)
                 rec.route.forEachIndexed { i, p -> flat[i * 2] = p[0]; flat[i * 2 + 1] = p[1] }
                 try {
-                    startActivity(Intent(this, MapActivity::class.java).putExtra("route", flat))
+                    startActivity(
+                        Intent(this, MapActivity::class.java)
+                            .putExtra("route", flat)
+                            .putExtra("mode", rec.mode)
+                            .putExtra("km", rec.km)
+                            .putExtra("elapsed", rec.elapsed)
+                            .putExtra("avg", rec.avgF)
+                            .putExtra("max", rec.maxF)
+                    )
                 } catch (e: Exception) {
                     Toast.makeText(this, "Halaman peta belum siap.", Toast.LENGTH_LONG).show()
                 }
@@ -895,9 +1374,11 @@ class MainActivity : Activity() {
         r.add(stepper("Berat badan", "Untuk perkiraan kalori", "${Themes.weight(this)} kg",
             { Themes.stepWeight(this, -1); showSettings() },
             { Themes.stepWeight(this, 1); showSettings() }), 8)
-        r.add(stepper("Target harian", "Jarak target saat tracking", "${Themes.target(this)} km",
-            { Themes.stepTarget(this, -1); showSettings() },
-            { Themes.stepTarget(this, 1); showSettings() }), 8)
+        for (m in modes) {
+            r.add(stepper("${icon(m)} Target $m", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
+                { Themes.stepTarget(this, m, -1); showSettings() },
+                { Themes.stepTarget(this, m, 1); showSettings() }, acc(m)), 8)
+        }
         val on = Themes.keepOn(this)
         r.add(btn("Layar tetap menyala: " + (if (on) "AKTIF" else "MATI"), t.surface) {
             Themes.setKeepOn(this, !on); applyTheme(); showSettings()
