@@ -1,3 +1,4 @@
+
 package com.biketracker.app
 
 import android.Manifest
@@ -12,6 +13,7 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.content.Intent
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -19,20 +21,20 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import android.content.Intent
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity() {
 
-    private val green = Color.rgb(38, 190, 125)
-    private val white = Color.WHITE
-    private val muted = Color.rgb(170, 180, 190)
-    private val dark = Color.rgb(16, 24, 32)
-    private val card = Color.rgb(31, 43, 54)
-    private val red = Color.rgb(220, 75, 75)
-    private val blue = Color.rgb(55, 130, 220)
+    private val bg = Color.rgb(5, 15, 34)
+    private val surface = Color.rgb(12, 30, 58)
+    private val surface2 = Color.rgb(17, 42, 77)
+    private val cyan = Color.rgb(0, 184, 255)
+    private val green = Color.rgb(39, 210, 130)
+    private val red = Color.rgb(244, 76, 88)
+    private val white = Color.rgb(245, 249, 255)
+    private val muted = Color.rgb(151, 174, 202)
 
     private lateinit var locationManager: LocationManager
 
@@ -72,7 +74,7 @@ class MainActivity : Activity() {
     private val gpsListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             if (location.accuracy > 25f) {
-                gpsText.text = "GPS aktif • Mencari sinyal akurat"
+                gpsText.text = "GPS • Mencari sinyal akurat..."
                 return
             }
 
@@ -111,15 +113,9 @@ class MainActivity : Activity() {
                 else -> 20f
             }
 
-            speedKmh = if (measuredSpeed in 0f..limit) {
-                measuredSpeed
-            } else {
-                0f
-            }
+            speedKmh = if (measuredSpeed in 0f..limit) measuredSpeed else 0f
 
-            if (speedKmh > maxSpeedKmh) {
-                maxSpeedKmh = speedKmh
-            }
+            if (speedKmh > maxSpeedKmh) maxSpeedKmh = speedKmh
 
             updateDashboardStats()
         }
@@ -144,10 +140,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = dark
-        window.navigationBarColor = dark
-        locationManager =
-            getSystemService(LOCATION_SERVICE) as LocationManager
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         showHome()
     }
 
@@ -171,22 +166,28 @@ class MainActivity : Activity() {
     private fun column(): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(24))
-            setBackgroundColor(dark)
+            setPadding(dp(20), dp(22), dp(20), dp(24))
+            setBackgroundColor(bg)
         }
 
     private fun showScreen(root: LinearLayout) {
         val scroll = ScrollView(this).apply {
             isFillViewport = true
-            setBackgroundColor(dark)
+            setBackgroundColor(bg)
             addView(root)
         }
         setContentView(scroll)
     }
 
-    private fun addGap(root: LinearLayout, height: Int) {
+    private fun gap(root: LinearLayout, height: Int) {
         root.addView(View(this), LinearLayout.LayoutParams(1, dp(height)))
     }
+
+    private fun panel(color: Int = surface, radius: Int = 20): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radius).toFloat()
+        }
 
     private fun makeButton(
         label: String,
@@ -198,59 +199,90 @@ class MainActivity : Activity() {
             setTextColor(white)
             textSize = 14f
             isAllCaps = false
-            background = GradientDrawable().apply {
-                setColor(color)
-                cornerRadius = dp(12).toFloat()
-            }
+            typeface = Typeface.DEFAULT_BOLD
+            background = panel(color, 15)
+            stateListAnimator = null
             setOnClickListener { action() }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(52)
+                dp(54)
             ).apply {
                 bottomMargin = dp(10)
             }
         }
     }
 
-    private fun makeStatCard(
+    private fun addHeader(root: LinearLayout, subtitle: String) {
+        root.addView(makeText("R I D E T R A C K", 12f, cyan, true))
+        gap(root, 5)
+        root.addView(makeText("RideTrack Pro", 29f, white, true))
+        gap(root, 4)
+        root.addView(makeText(subtitle, 14f, muted))
+    }
+
+    private fun statCard(
         label: String,
-        initial: String
+        initial: String,
+        accent: Int = white
     ): Pair<View, TextView> {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(12), dp(8), dp(12))
-            background = GradientDrawable().apply {
-                setColor(card)
-                cornerRadius = dp(14).toFloat()
-            }
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(10), dp(12))
+            background = panel(surface, 17)
         }
 
-        box.addView(makeText(label, 12f, muted, true))
-        val value = makeText(initial, 19f, white, true).apply {
-            gravity = Gravity.CENTER
-        }
+        box.addView(makeText(label.uppercase(Locale.getDefault()), 10f, muted, true))
+        gap(box, 7)
+
+        val value = makeText(initial, 18f, accent, true)
         box.addView(value)
+
         return Pair(box, value)
+    }
+
+    private fun addStatRow(
+        root: LinearLayout,
+        left: Pair<View, TextView>,
+        right: Pair<View, TextView>
+    ) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        row.addView(left.first, LinearLayout.LayoutParams(0, dp(88), 1f))
+        row.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
+        row.addView(right.first, LinearLayout.LayoutParams(0, dp(88), 1f))
+        root.addView(row)
     }
 
     private fun showHome() {
         val root = column()
 
-        root.addView(makeText("TAUPIK", 15f, green, true))
-        root.addView(makeText("BikeTracker", 30f, white, true))
-        root.addView(
-            makeText("Lacak perjalanan dan aktivitas GPS Anda", 14f, muted)
-        )
+        addHeader(root, "GPS CYCLING & ACTIVITY TRACKER")
+        gap(root, 24)
 
-        addGap(root, 22)
-        root.addView(makeText("JENIS AKTIVITAS", 13f, muted, true))
-        addGap(root, 8)
+        val welcome = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = panel(surface2, 22)
+        }
+
+        welcome.addView(makeText("SIAP UNTUK BERGERAK?", 11f, cyan, true))
+        gap(welcome, 7)
+        welcome.addView(makeText("Setiap perjalanan\npunya cerita.", 24f, white, true))
+        gap(welcome, 8)
+        welcome.addView(makeText("Pantau performa dan rekam perjalananmu.", 13f, muted))
+        root.addView(welcome)
+
+        gap(root, 22)
+        root.addView(makeText("PILIH AKTIVITAS", 12f, muted, true))
+        gap(root, 10)
 
         for (activityMode in listOf("Sepeda", "Lari", "Jalan")) {
             root.addView(makeButton(
-                if (mode == activityMode) "✓ $activityMode" else activityMode,
-                if (mode == activityMode) green else card
+                (if (mode == activityMode) "✓  " else "     ") + activityMode,
+                if (mode == activityMode) cyan else surface
             ) {
                 if (!running) {
                     mode = activityMode
@@ -259,29 +291,25 @@ class MainActivity : Activity() {
             })
         }
 
-        addGap(root, 12)
-        root.addView(makeText("Kecepatan saat ini", 14f, muted))
-        root.addView(makeText("0.0 km/jam", 30f, white, true))
+        gap(root, 14)
+        root.addView(makeText("MULAI PERJALANAN", 12f, muted, true))
+        gap(root, 8)
 
-        addGap(root, 12)
-        root.addView(makeButton("MULAI AKTIVITAS", green) {
+        root.addView(makeButton("▶   MULAI AKTIVITAS", green) {
             startTracking()
         })
 
-        root.addView(makeButton("PETA GPS", blue) {
-            try {
-                startActivity(Intent(this, MapActivity::class.java))
-            } catch (_: Exception) {
-                Toast.makeText(
-                    this,
-                    "Halaman peta belum siap.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+        root.addView(makeButton("⌖   BUKA PETA GPS", surface2) {
+            openMap()
         })
 
-        root.addView(makeButton("RIWAYAT AKTIVITAS", card) {
+        root.addView(makeButton("▤   RIWAYAT PERJALANAN", surface) {
             showHistory()
+        })
+
+        gap(root, 12)
+        root.addView(makeText("TRACK YOUR RIDE • REACH YOUR GOAL", 11f, muted, true).apply {
+            gravity = Gravity.CENTER
         })
 
         showScreen(root)
@@ -359,70 +387,77 @@ class MainActivity : Activity() {
     private fun showTracking() {
         val root = column()
 
-        root.addView(makeText("AKTIVITAS BERLANGSUNG", 13f, green, true))
-        root.addView(makeText(mode, 28f, white, true))
-        addGap(root, 16)
+        root.addView(makeText("●  AKTIVITAS BERLANGSUNG", 12f, green, true))
+        gap(root, 5)
+        root.addView(makeText(mode, 27f, white, true))
+        gap(root, 18)
 
-        root.addView(makeText("KECEPATAN", 13f, muted, true))
-        speedText = makeText("0.0", 48f, white, true)
-        root.addView(speedText)
-        root.addView(makeText("km/jam", 14f, muted))
-
-        addGap(root, 18)
-
-        val row1 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        val speedPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(24), dp(18), dp(24))
+            background = panel(surface2, 24)
         }
-        val distanceCard = makeStatCard("Jarak", "0.00 km")
-        val timeCard = makeStatCard("Waktu", "00:00:00")
-        distanceText = distanceCard.second
-        timeText = timeCard.second
 
-        row1.addView(distanceCard.first, LinearLayout.LayoutParams(0, dp(90), 1f))
-        row1.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
-        row1.addView(timeCard.first, LinearLayout.LayoutParams(0, dp(90), 1f))
-        root.addView(row1)
+        speedPanel.addView(makeText("KECEPATAN SAAT INI", 12f, muted, true))
+        gap(speedPanel, 10)
 
-        addGap(root, 10)
-
-        val row2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        speedText = makeText("0.0", 66f, white, true).apply {
+            gravity = Gravity.CENTER
         }
-        val avgCard = makeStatCard("Rata-rata", "0.0 km/jam")
-        val maxCard = makeStatCard("Maksimum", "0.0 km/jam")
-        averageSpeedText = avgCard.second
-        maxSpeedText = maxCard.second
+        speedPanel.addView(speedText)
+        gap(speedPanel, 1)
+        speedPanel.addView(makeText("KM/JAM", 12f, cyan, true))
+        gap(speedPanel, 12)
+        speedPanel.addView(makeText("LIVE GPS TRACKING", 10f, muted, true))
 
-        row2.addView(avgCard.first, LinearLayout.LayoutParams(0, dp(90), 1f))
-        row2.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
-        row2.addView(maxCard.first, LinearLayout.LayoutParams(0, dp(90), 1f))
-        root.addView(row2)
+        root.addView(speedPanel)
 
-        addGap(root, 14)
-        gpsText = makeText("GPS aktif • Menunggu lokasi...", 13f, green)
+        gap(root, 16)
+
+        val distance = statCard("Jarak tempuh", "0.00 km", cyan)
+        val time = statCard("Durasi", "00:00:00")
+        distanceText = distance.second
+        timeText = time.second
+        addStatRow(root, distance, time)
+
+        gap(root, 10)
+
+        val average = statCard("Rata-rata", "0.0 km/jam", green)
+        val maximum = statCard("Kecepatan maks.", "0.0 km/jam", cyan)
+        averageSpeedText = average.second
+        maxSpeedText = maximum.second
+        addStatRow(root, average, maximum)
+
+        gap(root, 16)
+        gpsText = makeText("GPS aktif • Menunggu lokasi...", 12f, green, true)
         root.addView(gpsText)
 
-        addGap(root, 22)
+        gap(root, 18)
         root.addView(makeButton(
-            if (paused) "LANJUTKAN" else "JEDA",
-            blue
+            if (paused) "▶   LANJUTKAN PERJALANAN" else "Ⅱ   JEDA PERJALANAN",
+            cyan
         ) {
             if (paused) resumeTracking() else pauseTracking()
         })
 
-        root.addView(makeButton("SELESAI & SIMPAN", red) {
+        root.addView(makeButton("■   SELESAI & SIMPAN", red) {
             finishTracking()
         })
 
-        root.addView(makeButton("PETA GPS", card) {
-            try {
-                startActivity(Intent(this, MapActivity::class.java))
-            } catch (_: Exception) {
-                Toast.makeText(this, "Peta belum siap.", Toast.LENGTH_SHORT).show()
-            }
+        root.addView(makeButton("⌖   LIHAT PETA GPS", surface) {
+            openMap()
         })
 
         showScreen(root)
+    }
+
+    private fun openMap() {
+        try {
+            startActivity(Intent(this, MapActivity::class.java))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Halaman peta belum siap.", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun currentElapsed(): Long {
@@ -436,25 +471,23 @@ class MainActivity : Activity() {
 
     private fun formatTime(milliseconds: Long): String {
         val seconds = (milliseconds / 1000L).coerceAtLeast(0L)
-        val hours = seconds / 3600
-        val minutes = (seconds % 3600) / 60
-        val remainingSeconds = seconds % 60
         return String.format(
             Locale.US,
             "%02d:%02d:%02d",
-            hours,
-            minutes,
-            remainingSeconds
+            seconds / 3600,
+            (seconds % 3600) / 60,
+            seconds % 60
         )
     }
 
     private fun updateAverageSpeed() {
-        val elapsedHours = currentElapsed() / 3600000f
-        averageSpeedKmh = if (elapsedHours > 0f) {
-            (distanceMeters / 1000f) / elapsedHours
+        val hours = currentElapsed() / 3600000f
+        averageSpeedKmh = if (hours > 0f) {
+            (distanceMeters / 1000f) / hours
         } else {
             0f
         }
+
         if (::averageSpeedText.isInitialized) {
             averageSpeedText.text =
                 String.format(Locale.US, "%.1f km/jam", averageSpeedKmh)
@@ -467,9 +500,7 @@ class MainActivity : Activity() {
         }
         if (::distanceText.isInitialized) {
             distanceText.text = String.format(
-                Locale.US,
-                "%.2f km",
-                distanceMeters / 1000f
+                Locale.US, "%.2f km", distanceMeters / 1000f
             )
         }
         if (::timeText.isInitialized) {
@@ -545,48 +576,51 @@ class MainActivity : Activity() {
         ).joinToString("|")
 
         val oldHistory = prefs.getString("records", "") ?: ""
-        val updated = if (oldHistory.isEmpty()) {
-            record
-        } else {
-            "$record\n$oldHistory"
-        }
-
+        val updated = if (oldHistory.isEmpty()) record else "$record\n$oldHistory"
         prefs.edit().putString("records", updated).apply()
     }
 
     private fun showSummary(elapsed: Long) {
         val root = column()
 
-        root.addView(makeText("AKTIVITAS SELESAI", 14f, green, true))
-        root.addView(makeText("Ringkasan perjalanan", 27f, white, true))
-        addGap(root, 20)
+        addHeader(root, "RINGKASAN AKTIVITAS")
+        gap(root, 22)
 
-        root.addView(makeText("Jenis aktivitas: $mode", 17f, white))
-        addGap(root, 10)
-        root.addView(makeText(
-            "Jarak: %.2f km".format(Locale.US, distanceMeters / 1000f),
-            17f, white
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(20), dp(18), dp(20))
+            background = panel(surface2, 22)
+        }
+
+        panel.addView(makeText("✓  PERJALANAN TERSIMPAN", 12f, green, true))
+        gap(panel, 14)
+        panel.addView(makeText(mode, 24f, white, true))
+        gap(panel, 8)
+        panel.addView(makeText(
+            String.format(Locale.US, "%.2f km", distanceMeters / 1000f),
+            36f, cyan, true
         ))
-        addGap(root, 10)
-        root.addView(makeText("Waktu: ${formatTime(elapsed)}", 17f, white))
-        addGap(root, 10)
-        root.addView(makeText(
-            "Kecepatan rata-rata: %.1f km/jam".format(
-                Locale.US, averageSpeedKmh
-            ), 17f, white
+        panel.addView(makeText("Jarak perjalanan", 13f, muted))
+        gap(panel, 20)
+        panel.addView(makeText("Durasi: ${formatTime(elapsed)}", 15f, white))
+        gap(panel, 8)
+        panel.addView(makeText(
+            String.format(Locale.US, "Rata-rata: %.1f km/jam", averageSpeedKmh),
+            15f, white
         ))
-        addGap(root, 10)
-        root.addView(makeText(
-            "Kecepatan maksimum: %.1f km/jam".format(
-                Locale.US, maxSpeedKmh
-            ), 17f, white
+        gap(panel, 8)
+        panel.addView(makeText(
+            String.format(Locale.US, "Kecepatan maksimum: %.1f km/jam", maxSpeedKmh),
+            15f, white
         ))
 
-        addGap(root, 24)
-        root.addView(makeButton("KEMBALI KE BERANDA", green) {
+        root.addView(panel)
+        gap(root, 20)
+
+        root.addView(makeButton("⌂   KEMBALI KE BERANDA", green) {
             showHome()
         })
-        root.addView(makeButton("LIHAT RIWAYAT", card) {
+        root.addView(makeButton("▤   LIHAT RIWAYAT", surface) {
             showHistory()
         })
 
@@ -596,48 +630,53 @@ class MainActivity : Activity() {
     private fun showHistory() {
         val root = column()
 
-        root.addView(makeText("RIWAYAT", 14f, green, true))
-        root.addView(makeText("Aktivitas tersimpan", 27f, white, true))
-        addGap(root, 16)
+        addHeader(root, "RIWAYAT PERJALANAN")
+        gap(root, 18)
 
         val records = (prefs.getString("records", "") ?: "")
             .lines()
             .filter { it.isNotBlank() }
 
         if (records.isEmpty()) {
-            root.addView(makeText("Belum ada aktivitas tersimpan.", 15f, muted))
+            val empty = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(20), dp(30), dp(20), dp(30))
+                background = panel()
+            }
+            empty.addView(makeText("Belum ada perjalanan", 18f, white, true))
+            gap(empty, 8)
+            empty.addView(makeText("Perjalanan yang diselesaikan akan muncul di sini.", 13f, muted))
+            root.addView(empty)
         } else {
+            root.addView(makeText(
+                "${records.size} perjalanan tersimpan",
+                13f, cyan, true
+            ))
+            gap(root, 12)
+
             for (record in records) {
                 val fields = record.split("|")
                 if (fields.size >= 6) {
                     val item = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
-                        setPadding(dp(14), dp(14), dp(14), dp(14))
-                        background = GradientDrawable().apply {
-                            setColor(card)
-                            cornerRadius = dp(12).toFloat()
-                        }
+                        setPadding(dp(16), dp(15), dp(16), dp(15))
+                        background = panel(surface, 17)
                     }
 
-                    item.addView(makeText(fields[1], 18f, green, true))
+                    item.addView(makeText(fields[1], 18f, cyan, true))
+                    gap(item, 4)
                     item.addView(makeText(fields[0], 12f, muted))
-                    item.addView(makeText(
-                        "Jarak: ${fields[2]} km",
-                        14f, white
-                    ))
+                    gap(item, 10)
+                    item.addView(makeText("Jarak: ${fields[2]} km", 15f, white, true))
+
                     val elapsed = fields[3].toLongOrNull() ?: 0L
-                    item.addView(makeText(
-                        "Waktu: ${formatTime(elapsed)}",
-                        14f, white
-                    ))
-                    item.addView(makeText(
-                        "Rata-rata: ${fields[4]} km/jam",
-                        14f, white
-                    ))
-                    item.addView(makeText(
-                        "Maksimum: ${fields[5]} km/jam",
-                        14f, white
-                    ))
+                    gap(item, 5)
+                    item.addView(makeText("Durasi: ${formatTime(elapsed)}", 13f, muted))
+                    gap(item, 4)
+                    item.addView(makeText("Rata-rata: ${fields[4]} km/jam", 13f, white))
+                    gap(item, 4)
+                    item.addView(makeText("Maksimum: ${fields[5]} km/jam", 13f, white))
 
                     root.addView(item, LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
@@ -654,8 +693,8 @@ class MainActivity : Activity() {
             })
         }
 
-        addGap(root, 12)
-        root.addView(makeButton("KEMBALI KE BERANDA", green) {
+        gap(root, 12)
+        root.addView(makeButton("⌂   KEMBALI KE BERANDA", green) {
             showHome()
         })
 
