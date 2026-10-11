@@ -31,6 +31,7 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
     var scaleMax = 60f
     var digital = false
     var accent: Int = t.accent
+    var scale = GAUGE_SCALE
 
     private val ev = ArgbEvaluator()
     private val stops = intArrayOf(
@@ -43,7 +44,7 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         val w = MeasureSpec.getSize(widthSpec)
-        setMeasuredDimension(w, (w * 0.8f * GAUGE_SCALE).toInt())
+        setMeasuredDimension(w, (w * 0.8f * scale).toInt())
     }
 
     private fun mix(a: Int, b: Int, k: Float): Int = ev.evaluate(k, a, b) as Int
@@ -64,7 +65,7 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
         else String.format(Locale.US, "%.1f", v)
 
     override fun onDraw(c: Canvas) {
-        val s = width * GAUGE_SCALE / 300f
+        val s = width * scale / 300f
         c.save()
         c.translate((width - 300f * s) / 2f, 0f)
         c.scale(s, s)
