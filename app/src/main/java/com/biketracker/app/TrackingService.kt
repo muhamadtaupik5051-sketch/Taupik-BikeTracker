@@ -148,8 +148,13 @@ class TrackingService : Service() {
             this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val km = TrackerState.distanceMeters / 1000f
-        val body = String.format(Locale.US, "%.2f km • %s", km, fmt(TrackerState.currentElapsed())) +
-            if (TrackerState.paused) " • dijeda" else ""
+        val time = fmt(TrackerState.currentElapsed())
+        val main = when (TrackerState.mode) {
+            "Lari" -> Fmt.dec(km, 2) + " km • " + Fmt.pace(TrackerState.paceNowSec()) + " /km • " + time
+            "Jalan" -> Fmt.int(TrackerState.steps()) + " langkah • " + Fmt.dec(km, 2) + " km • " + time
+            else -> Fmt.dec(km, 2) + " km • " + time
+        }
+        val body = main + (if (TrackerState.paused) " • dijeda" else "")
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else Notification.Builder(this)
         return b.setSmallIcon(android.R.drawable.ic_menu_mylocation)
