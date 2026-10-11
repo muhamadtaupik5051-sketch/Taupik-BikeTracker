@@ -103,9 +103,17 @@ class MainActivity : Activity() {
     private var paceBestText: TextView? = null
     private var ringInfo: TextView? = null
     private var splitsBox: LinearLayout? = null
-    private var trackRoute: RouteView? = null
+    private var trackMap: MapPanel? = null
+    private var chartMap: MapPanel? = null
+    private var chartDistText: TextView? = null
+    private var chartTimeText: TextView? = null
+    private var chartKcalText: TextView? = null
     private var routeDistText: TextView? = null
     private var routeTimeText: TextView? = null
+    private var routeGauge: GaugeView? = null
+    private var routeAvgText: TextView? = null
+    private var routeMaxText: TextView? = null
+    private var routeKcalText: TextView? = null
     private var chart: ChartView? = null
     private var chartAvgText: TextView? = null
     private var chartMaxText: TextView? = null
@@ -119,6 +127,17 @@ class MainActivity : Activity() {
                 refreshTracking()
                 handler.postDelayed(this, 1000)
             }
+        }
+    }
+
+    /** Dipanggil dari navigasi bawah di layar peta: buka tab yang dipilih. */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        when (intent?.getIntExtra("tab", -1) ?: -1) {
+            0 -> showHome()
+            2 -> showHistory()
+            3 -> showSettings()
         }
     }
 
@@ -142,6 +161,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        trackMap?.onResume(); chartMap?.onResume()
         if (running && !paused && currentTab == -1) {
             handler.removeCallbacks(timer)
             handler.post(timer)
@@ -149,6 +169,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        trackMap?.onPause(); chartMap?.onPause()
         handler.removeCallbacks(timer)
         super.onPause()
     }
@@ -247,6 +268,7 @@ class MainActivity : Activity() {
     }
 
     private fun show(tab: Int, body: LinearLayout) {
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         currentTab = tab
         inDetail = false
         val outer = LinearLayout(this).apply {
@@ -432,6 +454,7 @@ class MainActivity : Activity() {
 
     /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
     private fun showHome() {
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         currentTab = 0
         inDetail = false
         val w = resources.displayMetrics.widthPixels
@@ -580,7 +603,11 @@ class MainActivity : Activity() {
             { Themes.stepTarget(this, m, -1); showHome() },
             { Themes.stepTarget(this, m, 1); showHome() }, a), 10)
 
-        r.add(btn("▶   MULAI " + startLabel(m), a, 30) { startTracking(m) }, 10, 0f, dp(58))
+        if (running) {
+            r.add(btn("●   KEMBALI KE AKTIVITAS", a, 30) { showTracking() }, 10, 0f, dp(58))
+        } else {
+            r.add(btn("▶   MULAI " + startLabel(m), a, 30) { startTracking(m) }, 10, 0f, dp(58))
+        }
 
         val last = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }
             .filter { it.second.mode == m }.take(2)
@@ -673,7 +700,9 @@ class MainActivity : Activity() {
         targetInfo = null; gpsText = null; distanceText = null; timeText = null; avgText = null
         maxText = null; kcalText = null; climbText = null; speedText = null; cadenceText = null
         paceNowText = null; paceAvgText = null; paceBestText = null; ringInfo = null; splitsBox = null
-        trackRoute = null; routeDistText = null; routeTimeText = null
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
+        chartDistText = null; chartTimeText = null; chartKcalText = null; routeDistText = null; routeTimeText = null
+        routeGauge = null; routeAvgText = null; routeMaxText = null; routeKcalText = null
         chart = null; chartAvgText = null; chartMaxText = null
     }
 
@@ -683,46 +712,90 @@ class MainActivity : Activity() {
         addView(col)
     }
 
-    /** Halaman "Rute": jalur GPS besar (tanpa internet) + tombol ke peta lengkap. */
+    /** Halaman "Rute": peta sungguhan (Peta/Satelit) dengan garis rute langsung + tombol ke peta lengkap. */
     private fun buildRoutePage(a: Int): LinearLayout {
         val col = column()
-        val rv = RouteView(this, t).apply {
+        val g = GaugeView(this, t).apply {
+            scaleMax = scaleFor(mode)
             accent = a
-            hint = "Menunggu sinyal GPS…"
-            minimumHeight = dp(280)
+            scale = 0.5f
+            digital = true
         }
-        trackRoute = rv
-        col.addView(rv, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(6) })
+        routeGauge = g
+        col.add(g, 0)
+
+        val avgC = statCard("Rata-rata", "0,0 km/jam", t.text)
+        val maxC = statCard("Maksimum", "0,0 km/jam", t.text)
+        routeAvgText = avgC.second
+        routeMaxText = maxC.second
+        statRow(col, avgC, maxC, 4)
+
         val disC = statCard("Jarak", "0,00 km")
-        val timC = statCard("Durasi", "00:00:00")
+        val kalC = statCard("Kalori", "0 kkal")
+        val timC = statCard("Timer", "00:00:00")
         routeDistText = disC.second
+        routeKcalText = kalC.second
         routeTimeText = timC.second
-        statRow(col, disC, timC, 10)
-        col.add(btn("⌖   BUKA PETA LENGKAP", t.surface) { openMap() }, 10, 0f, dp(48))
+        val row = LinearLayout(this)
+        row.addView(disC.first, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(kalC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        row.addView(timC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        col.add(row, 8)
+
+        val mp = MapPanel(this, t, a)
+        trackMap = mp
+        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
         return col
     }
 
     /** Halaman "Grafik": kecepatan (atau pace untuk Lari) sepanjang aktivitas. */
     private fun buildChartPage(m: String, a: Int): LinearLayout {
         val col = column()
-        val cc = card(t.surface, 12, 16)
-        cc.addView(tv(if (m == "Lari") "Grafik pace (menit/km)" else "Grafik kecepatan (km/jam)", 12f, t.muted))
+
+        // Peta mini dengan pin Start dan Stop
+        val mp = MapPanel(this, t, a, true)
+        chartMap = mp
+        col.addView(mp, LinearLayout.LayoutParams(-1, dp(170)).apply { topMargin = dp(4) })
+
+        // Kartu ringkasan aktivitas
+        val sc = card(t.surface, 14, 18)
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(tv(icon(m), 22f, a).apply { gravity = Gravity.CENTER },
+            LinearLayout.LayoutParams(dp(40), dp(40)).apply { rightMargin = dp(10) })
+        val ht = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ht.addView(tv(m, 16f, t.text, true))
+        ht.addView(tv(SimpleDateFormat("d MMM yyyy HH:mm", Locale.forLanguageTag("id-ID")).format(Date()), 12f, t.muted))
+        head.addView(ht)
+        sc.addView(head)
+
+        val avgLabel = if (m == "Lari") "Pace rata-rata" else "Rata-rata"
+        val maxLabel = when (m) { "Lari" -> "Split terbaik"; "Jalan" -> "Irama"; else -> "Maksimum" }
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        val avgC = statCard(avgLabel, "--", t.text)
+        val maxC = statCard(maxLabel, "--", t.text)
+        val kalC = statCard("Kalori", "0 kkal", Themes.modeAccent("Lari"))
+        chartDistText = disC.second
+        chartTimeText = timC.second
+        chartAvgText = avgC.second
+        chartMaxText = maxC.second
+        chartKcalText = kalC.second
+        statRow(sc, disC, timC, 12)
+        statRow(sc, avgC, maxC, 8)
+        statRow(sc, kalC, Pair<View, TextView>(View(this), TextView(this)), 8)
+        col.add(sc, 8)
+
+        // Grafik kecepatan
+        val cc = card(t.surface, 14, 18)
+        cc.addView(tv(if (m == "Lari") "Grafik Pace (menit/km)" else "Grafik Kecepatan", 14f, t.text, true))
         val ch = ChartView(this, t, a)
         if (m == "Lari") {
             ch.yTitle = "min/km"
             ch.label = { v -> if (v < 1.5f) "" else Fmt.pace((3600f / v).roundToInt()) }
         }
         chart = ch
-        cc.add(ch, 8, 0f, dp(260))
-        col.add(cc, 6)
-
-        val avgLabel = if (m == "Lari") "Pace rata-rata" else "Rata-rata"
-        val maxLabel = when (m) { "Lari" -> "Split terbaik"; "Jalan" -> "Irama"; else -> "Maksimum" }
-        val avgC = statCard(avgLabel, "--", t.good)
-        val maxC = statCard(maxLabel, "--", a)
-        chartAvgText = avgC.second
-        chartMaxText = maxC.second
-        statRow(col, avgC, maxC, 10)
+        cc.add(ch, 6, 0f, dp(220))
+        col.add(cc, 8)
         return col
     }
 
@@ -814,6 +887,7 @@ class MainActivity : Activity() {
         outer.addView(header)
         outer.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
         outer.addView(row)
+        outer.addView(navBar(-1))
         setContentView(outer)
         outer.requestApplyInsets()
         pager.post { pager.goTo(trackPage, false) }
@@ -1011,9 +1085,18 @@ class MainActivity : Activity() {
         targetBar?.let { it.fraction = frac; it.invalidate() }
         targetPct?.text = pct
 
-        trackRoute?.let { it.points = route.toList(); it.invalidate() }
+        val rl = route.toList()
+        trackMap?.sync(rl)
+        chartMap?.sync(rl)
         routeDistText?.text = Fmt.dec(km, 2) + " km"
         routeTimeText?.text = Fmt.time(currentElapsed())
+        routeKcalText?.text = "${calories()} kkal"
+        chartDistText?.text = Fmt.dec(km, 2) + " km"
+        chartTimeText?.text = Fmt.time(currentElapsed())
+        chartKcalText?.text = "${calories()} kkal"
+        routeAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+        routeMaxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+        routeGauge?.let { it.speed = speedKmh; it.maxSpeed = maxSpeedKmh; it.invalidate() }
         chart?.let {
             it.values = TrackerState.speedSamples.toList()
             it.minutes = TrackerState.chartMinutes()
@@ -1411,6 +1494,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         super.onDestroy()
     }
 }
