@@ -35,10 +35,12 @@ jobs:
           ls -la
           find . -maxdepth 4 -type f | sort
 
+      
       - name: Build APK
         run: |
           set -o pipefail
-          gradle assembleDebug --console=plain 2>&1 | tee build.log
+          gradle assembleDebug --stacktrace --info --console=plain 2>&1 | tee build.log
+
 
       - name: Upload APK
         if: success()
