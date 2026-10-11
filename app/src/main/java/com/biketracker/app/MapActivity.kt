@@ -1,74 +1,68 @@
-
 package com.biketracker.app
 
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.view.Gravity
+import java.util.Locale
 
+/**
+ * Peta GPS (OpenStreetMap + Leaflet). Tiga mode:
+ * 1. Riwayat   : menampilkan rute satu perjalanan (extra "route" = lat,lon,lat,lon,...)
+ * 2. Live      : saat tracking berjalan, rute diambil dari TrackerState
+ * 3. Biasa     : menampilkan posisi saat ini
+ */
 class MapActivity : Activity() {
 
     private lateinit var mapView: WebView
     private lateinit var statusText: TextView
     private lateinit var locationManager: LocationManager
+    private val handler = Handler(Looper.getMainLooper())
 
     private var accentHex = "#26be7d"
-    private var mapReady = false
-    private var firstLocation = true
+    private var pageReady = false
+    private var viewRoute: List<DoubleArray>? = null
+    private var sent = 0
+    private var firstFix = true
+    private var ownGps = false
 
-    private val routePoints = mutableListOf<Location>()
+    private val ticker = object : Runnable {
+        override fun run() {
+            liveUpdate()
+            handler.postDelayed(this, 1000)
+        }
+    }
 
     private val gpsListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            if (location.hasAccuracy() && location.accuracy > 30f) {
+            if (location.accuracy > 30f) {
                 statusText.text = "GPS mencari sinyal yang lebih akurat..."
                 return
             }
-
-            val previous = routePoints.lastOrNull()
-
-            if (previous != null) {
-                val distance = previous.distanceTo(location)
-
-                if (distance < 3f) return
-                if (distance > 100f) return
-            }
-
-            routePoints.add(location)
-
-            statusText.text =
-                "GPS aktif • Titik rute: ${routePoints.size}"
-
-            if (mapReady) {
-                val lat = location.latitude
-                val lon = location.longitude
-
+            statusText.text = "Posisi saat ini • GPS ±${location.accuracy.toInt()} m"
+            if (pageReady) {
                 mapView.evaluateJavascript(
-                    "addRoutePoint($lat, $lon, $firstLocation)",
+                    String.format(Locale.US, "setPosition(%.6f,%.6f,%b)", location.latitude, location.longitude, firstFix),
                     null
                 )
+                firstFix = false
             }
-
-            firstLocation = false
         }
 
-        @Deprecated("Deprecated by Android")
-        override fun onStatusChanged(
-            provider: String?,
-            status: Int,
-            extras: Bundle?
-        ) {}
+        @Suppress("DEPRECATION")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
 
         override fun onProviderEnabled(provider: String) {
             statusText.text = "GPS aktif • Menunggu lokasi..."
@@ -79,15 +73,43 @@ class MapActivity : Activity() {
         }
     }
 
+    /** Dipanggil dari JavaScript (thread lain), jadi selalu dipindah ke main thread. */
+    inner class Bridge {
+        @JavascriptInterface
+        fun onReady() {
+            handler.post {
+                pageReady = true
+                onMapReady()
+            }
+        }
+
+        @JavascriptInterface
+        fun onFail() {
+            handler.post {
+                statusText.text = "Peta butuh internet dan belum bisa dimuat. Rute tetap direkam."
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        locationManager =
-            getSystemService(LOCATION_SERVICE) as LocationManager
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
 
         val t = Themes.current(this)
         Themes.styleWindow(this, t)
         accentHex = String.format("#%06X", 0xFFFFFF and t.accent)
+
+        val flat = intent?.getDoubleArrayExtra("route")
+        if (flat != null && flat.size >= 2) {
+            val list = ArrayList<DoubleArray>()
+            var i = 0
+            while (i + 1 < flat.size) {
+                list.add(doubleArrayOf(flat[i], flat[i + 1]))
+                i += 2
+            }
+            viewRoute = list
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -107,6 +129,8 @@ class MapActivity : Activity() {
 
         mapView = WebView(this).apply {
             settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            addJavascriptInterface(Bridge(), "Bridge")
             webViewClient = WebViewClient()
         }
 
@@ -122,16 +146,10 @@ class MapActivity : Activity() {
         }
 
         root.addView(statusText)
-
         root.addView(
             mapView,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         )
-
         root.addView(
             backButton,
             LinearLayout.LayoutParams(
@@ -149,29 +167,60 @@ class MapActivity : Activity() {
             null
         )
 
-        mapView.postDelayed({
-            mapReady = true
-
-            routePoints.forEachIndexed { index, location ->
-                mapView.evaluateJavascript(
-                    "addRoutePoint(${location.latitude}, " +
-                        "${location.longitude}, ${index == 0})",
-                    null
-                )
+        // Jika peta belum siap setelah 20 detik, beri tahu pengguna.
+        handler.postDelayed({
+            if (!pageReady) {
+                statusText.text = "Peta belum termuat. Periksa koneksi internet."
             }
-        }, 2500)
-
-        startGps()
+        }, 20000)
     }
 
-    private fun startGps() {
-        if (checkSelfPermission(
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED &&
-            checkSelfPermission(
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+    /** Dipanggil sekali ketika Leaflet sudah siap. */
+    private fun onMapReady() {
+        val vr = viewRoute
+        when {
+            vr != null -> {
+                statusText.text = String.format(Locale.US, "Rute perjalanan • %d titik", vr.size)
+                mapView.evaluateJavascript("showRoute(${toJson(vr, 0)})", null)
+            }
+            TrackerState.running -> {
+                sent = 0
+                liveUpdate()
+                handler.removeCallbacks(ticker)
+                handler.postDelayed(ticker, 1000)
+            }
+            else -> startOwnGps()
+        }
+    }
+
+    private fun liveUpdate() {
+        if (!pageReady || !TrackerState.running) return
+        val r = TrackerState.route
+        if (r.size < sent) sent = 0
+        if (r.size > sent) {
+            mapView.evaluateJavascript("addPoints(${toJson(r, sent)})", null)
+            sent = r.size
+        }
+        val km = TrackerState.distanceMeters / 1000f
+        statusText.text = if (TrackerState.paused) {
+            String.format(Locale.US, "Aktivitas dijeda • %.2f km", km)
+        } else {
+            String.format(Locale.US, "Merekam rute • %d titik • %.2f km", r.size, km)
+        }
+    }
+
+    private fun toJson(list: List<DoubleArray>, from: Int): String {
+        val sb = StringBuilder("[")
+        for (i in from until list.size) {
+            if (i > from) sb.append(',')
+            sb.append(String.format(Locale.US, "[%.6f,%.6f]", list[i][0], list[i][1]))
+        }
+        return sb.append(']').toString()
+    }
+
+    private fun startOwnGps() {
+        if (ownGps) return
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -179,19 +228,14 @@ class MapActivity : Activity() {
                 ),
                 200
             )
-            statusText.text = "Izinkan akses lokasi untuk menampilkan rute"
+            statusText.text = "Izinkan akses lokasi presisi untuk menampilkan posisi"
             return
         }
-
         try {
-            locationManager.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                2000L,
-                0f,
-                gpsListener
-            )
+            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, gpsListener)
+            ownGps = true
             statusText.text = "GPS aktif • Menunggu sinyal..."
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             statusText.text = "GPS tidak tersedia. Periksa lokasi HP."
         }
     }
@@ -201,21 +245,13 @@ class MapActivity : Activity() {
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
-        super.onRequestPermissionsResult(
-            requestCode,
-            permissions,
-            grantResults
-        )
-
-        if (requestCode == 200 &&
-            (checkSelfPermission(
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED ||
-             checkSelfPermission(
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED)
-        ) {
-            startGps()
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 200) {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                if (pageReady) startOwnGps()
+            } else {
+                statusText.text = "Izin lokasi presisi ditolak. Aktifkan di Pengaturan HP."
+            }
         }
     }
 
@@ -224,59 +260,80 @@ class MapActivity : Activity() {
             <!DOCTYPE html>
             <html>
             <head>
-              <meta name="viewport"
-                    content="width=device-width, initial-scale=1.0">
-              <link rel="stylesheet"
-                href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-              <script
-                src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
-              </script>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <style>
-                html, body, #map {
-                  height: 100%;
-                  width: 100%;
-                  margin: 0;
-                  padding: 0;
-                }
+                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
               </style>
             </head>
             <body>
               <div id="map"></div>
               <script>
-                const map = L.map('map').setView([-2.5, 118], 5);
+                var map = null, route = null, marker = null;
+                var ACCENT = '$accentHex';
 
-                L.tileLayer(
-                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  {
+                function dotStyle(color) {
+                  return { radius: 8, color: '#ffffff', weight: 3, fillColor: color, fillOpacity: 1 };
+                }
+
+                function initMap() {
+                  map = L.map('map').setView([-2.5, 118], 5);
+                  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19,
                     attribution: '&copy; OpenStreetMap contributors'
-                  }
-                ).addTo(map);
+                  }).addTo(map);
+                  route = L.polyline([], { color: ACCENT, weight: 5 }).addTo(map);
+                  Bridge.onReady();
+                }
 
-                const route = L.polyline([], {
-                  color: '$accentHex',
-                  weight: 5
-                }).addTo(map);
+                function loadLeaflet(bases, i) {
+                  if (i >= bases.length) { Bridge.onFail(); return; }
+                  var css = document.createElement('link');
+                  css.rel = 'stylesheet';
+                  css.href = bases[i] + 'leaflet.css';
+                  document.head.appendChild(css);
+                  var s = document.createElement('script');
+                  s.src = bases[i] + 'leaflet.js';
+                  s.onload = initMap;
+                  s.onerror = function () { loadLeaflet(bases, i + 1); };
+                  document.head.appendChild(s);
+                }
 
-                let points = [];
-                let marker = null;
+                loadLeaflet([
+                  'https://unpkg.com/leaflet@1.9.4/dist/',
+                  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'
+                ], 0);
 
-                function addRoutePoint(lat, lon, first) {
-                  const point = [lat, lon];
-                  points.push(point);
-                  route.setLatLngs(points);
-
-                  if (marker) {
-                    marker.setLatLng(point);
+                // Rute yang sedang direkam: tambahkan titik baru dan ikuti posisi terakhir.
+                function addPoints(arr) {
+                  if (!map || arr.length === 0) return;
+                  for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); }
+                  var last = arr[arr.length - 1];
+                  if (!marker) {
+                    marker = L.circleMarker(last, dotStyle(ACCENT)).addTo(map);
+                    map.setView(last, 17);
                   } else {
-                    marker = L.marker(point).addTo(map);
+                    marker.setLatLng(last);
+                    map.panTo(last);
                   }
+                }
 
-                  if (first) {
-                    map.setView(point, 17);
-                  } else {
-                    map.panTo(point);
-                  }
+                // Rute perjalanan dari riwayat: tampilkan utuh.
+                function showRoute(arr) {
+                  if (!map || arr.length === 0) return;
+                  route.setLatLngs(arr);
+                  L.circleMarker(arr[0], dotStyle('#27D282')).addTo(map);
+                  L.circleMarker(arr[arr.length - 1], dotStyle('#FF3B3B')).addTo(map);
+                  if (arr.length > 1) { map.fitBounds(route.getBounds(), { padding: [30, 30] }); }
+                  else { map.setView(arr[0], 17); }
+                }
+
+                // Posisi saat ini (tanpa tracking).
+                function setPosition(lat, lon, first) {
+                  if (!map) return;
+                  var p = [lat, lon];
+                  if (!marker) { marker = L.circleMarker(p, dotStyle(ACCENT)).addTo(map); }
+                  else { marker.setLatLng(p); }
+                  if (first) { map.setView(p, 17); } else { map.panTo(p); }
                 }
               </script>
             </body>
@@ -285,9 +342,10 @@ class MapActivity : Activity() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         try {
             locationManager.removeUpdates(gpsListener)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
         }
 
         mapView.stopLoading()
