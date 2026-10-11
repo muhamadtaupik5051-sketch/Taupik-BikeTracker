@@ -3,9 +3,12 @@ package com.biketracker.app
 import android.animation.ArgbEvaluator
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.DashPathEffect
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
@@ -18,6 +21,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+private const val GAUGE_SCALE = 0.72f
 
 /** Speedometer analog: busur segmen hijau -> merah, skala, penunjuk, angka digital di tengah. */
 class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
@@ -38,7 +43,7 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         val w = MeasureSpec.getSize(widthSpec)
-        setMeasuredDimension(w, (w * 0.8f).toInt())
+        setMeasuredDimension(w, (w * 0.8f * GAUGE_SCALE).toInt())
     }
 
     private fun mix(a: Int, b: Int, k: Float): Int = ev.evaluate(k, a, b) as Int
@@ -59,8 +64,9 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
         else String.format(Locale.US, "%.1f", v)
 
     override fun onDraw(c: Canvas) {
-        val s = width / 300f
+        val s = width * GAUGE_SCALE / 300f
         c.save()
+        c.translate((width - 300f * s) / 2f, 0f)
         c.scale(s, s)
         c.translate(0f, -18f)
 
@@ -336,82 +342,114 @@ class PagerScroll(ctx: Context, private val pageW: Int, private val onPage: (Int
     }
 }
 
-/** Grafik garis sederhana (kecepatan atau pace terhadap waktu). Nilai lebih tinggi = garis lebih atas. */
+/** Grafik area (kecepatan atau pace terhadap waktu): kurva halus, isi gradasi, sumbu berjudul. */
 class ChartView(ctx: Context, private val t: AppTheme, var accent: Int) : View(ctx) {
     var values: List<Float> = emptyList()
     var minutes = 0f
     var label: (Float) -> String = { v -> Fmt.dec(v, 0) }
-    var hint = "Grafik muncul setelah mulai bergerak"
+    var yTitle = "km/jam"
+    var hint = "Menunggu data, mulai bergerak"
 
     private val d = resources.displayMetrics.density
-    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(4f * d, 4f * d), 0f)
+    }
+    private val axis = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val txt = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()
     private val area = Path()
 
+    private fun niceStep(total: Float): Float {
+        val opts = floatArrayOf(1f, 2f, 5f, 10f, 15f, 30f, 60f, 120f)
+        for (o in opts) if (total / o <= 6f) return o
+        return 240f
+    }
+
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
+        val has = values.size >= 2
         txt.color = t.muted
         txt.textSize = 10f * d
 
-        if (values.size < 2) {
-            txt.textAlign = Paint.Align.CENTER
-            txt.textSize = 12f * d
-            c.drawText(hint, w / 2f, h / 2f, txt)
-            return
-        }
+        val x0 = 42f * d
+        val x1 = w - 10f * d
+        val y0 = 22f * d
+        val y1 = h - 34f * d
+        val top = if (has) (ceil((values.maxOrNull() ?: 0f) / 8f) * 8f).coerceAtLeast(8f) else 40f
+        val total = if (has) max(minutes, 1f) else 10f
 
-        val x0 = 40f * d
-        val x1 = w - 8f * d
-        val y0 = 8f * d
-        val y1 = h - 24f * d
-        val top = (ceil((values.maxOrNull() ?: 0f) / 8f) * 8f).coerceAtLeast(8f)
-
+        // garis bantu mendatar + label sumbu Y
         grid.color = t.surface2
         grid.strokeWidth = 1f * d
         txt.textAlign = Paint.Align.RIGHT
         for (i in 0..4) {
             val y = y1 - (y1 - y0) * i / 4f
-            c.drawLine(x0, y, x1, y, grid)
+            if (i > 0) c.drawLine(x0, y, x1, y, grid)
             val s = label(top * i / 4f)
             if (s.isNotEmpty()) c.drawText(s, x0 - 6f * d, y + 3.5f * d, txt)
         }
+        txt.textAlign = Paint.Align.LEFT
+        c.drawText(yTitle, 4f * d, y0 - 9f * d, txt)
 
-        path.reset()
-        area.reset()
-        val n = values.size
-        for (k in 0 until n) {
-            val x = x0 + (x1 - x0) * k / (n - 1f)
-            val y = y1 - (y1 - y0) * (values[k] / top).coerceIn(0f, 1f)
-            if (k == 0) {
-                path.moveTo(x, y)
-                area.moveTo(x, y)
-            } else {
-                path.lineTo(x, y)
-                area.lineTo(x, y)
-            }
+        // sumbu X: garis dasar, tanda, angka menit
+        axis.color = t.muted
+        axis.strokeWidth = 1f * d
+        c.drawLine(x0, y1, x1, y1, axis)
+        val step = niceStep(total)
+        txt.textAlign = Paint.Align.CENTER
+        var m = 0f
+        while (m <= total + 0.01f) {
+            val x = x0 + (x1 - x0) * m / total
+            c.drawLine(x, y1, x, y1 + 4f * d, axis)
+            c.drawText(Fmt.dec(m, 0), x, y1 + 16f * d, txt)
+            m += step
         }
-        area.lineTo(x1, y1)
-        area.lineTo(x0, y1)
+        txt.textAlign = Paint.Align.RIGHT
+        c.drawText("Menit", x1, h - 3f * d, txt)
+
+        if (!has) {
+            txt.textAlign = Paint.Align.CENTER
+            txt.textSize = 12f * d
+            c.drawText(hint, (x0 + x1) / 2f, (y0 + y1) / 2f, txt)
+            return
+        }
+
+        // kurva halus (kubik) + area isi gradasi
+        val n = values.size
+        val px = FloatArray(n)
+        val py = FloatArray(n)
+        for (k in 0 until n) {
+            px[k] = x0 + (x1 - x0) * k / (n - 1f)
+            py[k] = y1 - (y1 - y0) * (values[k] / top).coerceIn(0f, 1f)
+        }
+        path.reset()
+        path.moveTo(px[0], py[0])
+        for (k in 1 until n) {
+            val mx = (px[k - 1] + px[k]) / 2f
+            path.cubicTo(mx, py[k - 1], mx, py[k], px[k], py[k])
+        }
+        area.set(path)
+        area.lineTo(px[n - 1], y1)
+        area.lineTo(px[0], y1)
         area.close()
-        fill.color = (accent and 0x00FFFFFF) or 0x33000000
+        val rgb = accent and 0x00FFFFFF
+        fill.shader = LinearGradient(0f, y0, 0f, y1, rgb or 0x70000000, rgb or 0x08000000, Shader.TileMode.CLAMP)
         c.drawPath(area, fill)
         line.color = accent
         line.strokeWidth = 2.5f * d
         c.drawPath(path, line)
 
-        txt.textAlign = Paint.Align.LEFT
-        c.drawText("0", x0, h - 6f * d, txt)
-        txt.textAlign = Paint.Align.CENTER
-        c.drawText(Fmt.dec(minutes / 2f, 0), (x0 + x1) / 2f, h - 6f * d, txt)
-        txt.textAlign = Paint.Align.RIGHT
-        c.drawText(Fmt.dec(minutes, 0) + " mnt", x1, h - 6f * d, txt)
+        // titik posisi terakhir
+        dot.color = accent
+        c.drawCircle(px[n - 1], py[n - 1], 4f * d, dot)
     }
 }
