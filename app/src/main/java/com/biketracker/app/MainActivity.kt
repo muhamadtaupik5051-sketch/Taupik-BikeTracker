@@ -451,39 +451,22 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(4), dp(4), dp(4))
             background = box(t.surface, 16, true)
         }
-        val tabViews = ArrayList<TextView>()
-        lateinit var pager: PagerScroll
-
         fun styleTab(v: TextView, selected: Boolean, m: String) {
             val a = acc(m)
             v.setTextColor(if (selected) onColor(a) else t.muted)
             v.background = if (selected) box(a, 12) else null
         }
-
-        fun applyPage(p: Int) {
-            homePage = p
-            val m = modes[p]
-            if (!running) mode = m
-            small.setTextColor(acc(m))
-            big.text = greeting(m)
-            tabViews.forEachIndexed { i, v -> styleTab(v, i == p, modes[i]) }
-        }
-
         modes.forEachIndexed { i, m ->
             val chip = tv(icon(m) + "  " + m, 13f, t.muted, true).apply {
                 gravity = Gravity.CENTER
-                setOnClickListener { if (!running) pager.goTo(i, true) }
+                setOnClickListener { if (!running && mode != m) { mode = m; showHome() } }
             }
             styleTab(chip, i == homePage, m)
-            tabViews.add(chip)
             tabRow.addView(chip, LinearLayout.LayoutParams(0, dp(44), 1f).apply { if (i > 0) leftMargin = dp(4) })
         }
         header.add(tabRow, 12)
 
-        pager = PagerScroll(this, w) { p -> applyPage(p) }
-        val strip = LinearLayout(this)
-        for (m in modes) strip.addView(homePageView(m), LinearLayout.LayoutParams(w, -1))
-        pager.addView(strip)
+        val body = homePageView(modes[homePage])
 
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -493,11 +476,10 @@ class MainActivity : Activity() {
             }
         }
         outer.addView(header)
-        outer.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
+        outer.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         outer.addView(navBar(0))
         setContentView(outer)
         outer.requestApplyInsets()
-        pager.post { pager.goTo(homePage, false) }
     }
 
     /** Isi satu halaman beranda untuk satu aktivitas. */
@@ -505,6 +487,32 @@ class MainActivity : Activity() {
         val a = acc(m)
         val r = column()
         val (week, recs) = weekData(m)
+
+        val todayStr0 = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val todayRecs = recs.filter { it.date.startsWith(todayStr0) }
+        val tgt = Themes.target(this, m).toFloat().coerceAtLeast(1f)
+        val todayKm = todayRecs.sumOf { it.km.toDouble() }.toFloat()
+        val todaySt = todayRecs.sumOf { it.steps }
+        val todayMs = todayRecs.sumOf { it.elapsed }
+        val hc = card(t.surface, 14, 14)
+        val hrow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val ring0 = RingView(this, t, a).apply {
+            label = "HARI INI"
+            if (m == "Jalan") { value = Fmt.int(todaySt); sub = "langkah"; fraction = todaySt / tgt }
+            else { value = Fmt.dec(todayKm, 1); sub = "km"; fraction = todayKm / tgt }
+        }
+        hrow.addView(ring0, LinearLayout.LayoutParams(dp(112), dp(112)))
+        val facts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun fact(k: String, v: String) {
+            facts.addView(tv(k, 11f, t.muted))
+            facts.addView(mono(tv(v, 17f, t.text, true)), LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(6) })
+        }
+        fact("Target", Themes.targetLabel(m, Themes.target(this, m)))
+        fact("Durasi hari ini", Fmt.hm(todayMs))
+        fact("Aktivitas hari ini", todayRecs.size.toString() + "x")
+        hrow.addView(facts, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(18) })
+        hc.addView(hrow)
+        r.add(hc, 6)
 
         val wc = card(t.surface, 14, 18)
         val top = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
@@ -540,7 +548,7 @@ class MainActivity : Activity() {
             bars.addView(col, LinearLayout.LayoutParams(0, dp(68), 1f).apply { if (i > 0) leftMargin = dp(6) })
         }
         wc.add(bars, 10)
-        r.add(wc, 6)
+        r.add(wc, 10)
 
         val totalKm = recs.sumOf { it.km.toDouble() }.toFloat()
         val totalMs = recs.sumOf { it.elapsed }
@@ -701,10 +709,11 @@ class MainActivity : Activity() {
         cc.addView(tv(if (m == "Lari") "Grafik pace (menit/km)" else "Grafik kecepatan (km/jam)", 12f, t.muted))
         val ch = ChartView(this, t, a)
         if (m == "Lari") {
+            ch.yTitle = "min/km"
             ch.label = { v -> if (v < 1.5f) "" else Fmt.pace((3600f / v).roundToInt()) }
         }
         chart = ch
-        cc.add(ch, 8, 0f, dp(240))
+        cc.add(ch, 8, 0f, dp(260))
         col.add(cc, 6)
 
         val avgLabel = if (m == "Lari") "Pace rata-rata" else "Rata-rata"
