@@ -169,6 +169,43 @@ class MapActivity : Activity() {
         return chip
     }
 
+    private fun goTab(tab: Int) {
+        val i = android.content.Intent(this, MainActivity::class.java)
+        i.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        i.putExtra("tab", tab)
+        startActivity(i)
+        finish()
+    }
+
+    private fun bottomNav(): View {
+        val bar = LinearLayout(this).apply {
+            setBackgroundColor(t.surface)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        listOf("⌂" to "Beranda", "⌖" to "Peta", "▤" to "Riwayat", "⚙" to "Atur")
+            .forEachIndexed { i, (ic, label) ->
+                val sel = i == 1
+                val c = if (sel) t.accent else t.muted
+                val cell = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(6), 0, dp(6))
+                    setOnClickListener { if (i != 1) goTab(i) }
+                }
+                cell.addView(TextView(this).apply {
+                    text = ic; textSize = 20f; setTextColor(c); typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                })
+                cell.addView(TextView(this).apply {
+                    text = label; textSize = 10f; setTextColor(c)
+                    typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    gravity = Gravity.CENTER
+                })
+                bar.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+        return bar
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -328,6 +365,9 @@ class MapActivity : Activity() {
                 )
             }
         }
+
+        // Navigasi bawah, sama seperti di layar utama, supaya tidak hilang saat melihat peta.
+        root.addView(bottomNav())
         setContentView(root)
 
         mapView.loadDataWithBaseURL(
@@ -480,128 +520,7 @@ class MapActivity : Activity() {
         }
     }
 
-    private fun mapHtml(): String {
-        return """
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <style>
-                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
-                .pin { width: 26px; height: 26px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
-                       border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); }
-                .pin.g { background: #27D282; }
-                .pin.r { background: #FF3B3B; }
-              </style>
-            </head>
-            <body>
-              <div id="map"></div>
-              <script>
-                var map = null, route = null, marker = null, startPin = null, endPin = null;
-                var osm = null, sat = null, follow = true;
-                var ACCENT = '$accentHex';
-
-                function dotStyle(color) {
-                  return { radius: 8, color: '#ffffff', weight: 3, fillColor: color, fillOpacity: 1 };
-                }
-
-                function pin(cls) {
-                  return L.divIcon({
-                    className: '',
-                    html: '<div class="pin ' + cls + '"></div>',
-                    iconSize: [32, 32],
-                    iconAnchor: [16, 39]
-                  });
-                }
-
-                function initMap() {
-                  map = L.map('map', { zoomControl: false }).setView([-2.5, 118], 5);
-                  osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap contributors'
-                  }).addTo(map);
-                  sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                    maxZoom: 19,
-                    attribution: 'Tiles &copy; Esri'
-                  });
-                  map.on('dragstart', function () { follow = false; });
-                  route = L.polyline([], { color: ACCENT, weight: 5 }).addTo(map);
-                  Bridge.onReady();
-                }
-
-                function loadLeaflet(bases, i) {
-                  if (i >= bases.length) { Bridge.onFail(); return; }
-                  var css = document.createElement('link');
-                  css.rel = 'stylesheet';
-                  css.href = bases[i] + 'leaflet.css';
-                  document.head.appendChild(css);
-                  var s = document.createElement('script');
-                  s.src = bases[i] + 'leaflet.js';
-                  s.onload = initMap;
-                  s.onerror = function () { loadLeaflet(bases, i + 1); };
-                  document.head.appendChild(s);
-                }
-
-                loadLeaflet([
-                  'https://unpkg.com/leaflet@1.9.4/dist/',
-                  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'
-                ], 0);
-
-                // Ganti tampilan peta: 'osm' (Peta) atau 'sat' (Satelit).
-                function setLayer(n) {
-                  if (!map) return;
-                  if (n === 'sat') { if (map.hasLayer(osm)) map.removeLayer(osm); if (!map.hasLayer(sat)) sat.addTo(map); }
-                  else { if (map.hasLayer(sat)) map.removeLayer(sat); if (!map.hasLayer(osm)) osm.addTo(map); }
-                }
-
-                // Tombol lokasi: kembali mengikuti posisi, atau tampilkan seluruh rute.
-                function locate() {
-                  if (!map) return;
-                  follow = true;
-                  if (marker) { map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16)); }
-                  else if (route && route.getLatLngs().length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
-                  else if (endPin) { map.setView(endPin.getLatLng(), 16); }
-                }
-
-                // Rute yang sedang direkam: tambahkan titik baru dan ikuti posisi terakhir.
-                function addPoints(arr) {
-                  if (!map || arr.length === 0) return;
-                  var first = route.getLatLngs().length === 0;
-                  for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); }
-                  var last = arr[arr.length - 1];
-                  if (first) { startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map); }
-                  if (!marker) {
-                    marker = L.circleMarker(last, dotStyle(ACCENT)).addTo(map);
-                    map.setView(last, 17);
-                  } else {
-                    marker.setLatLng(last);
-                    if (follow) map.panTo(last);
-                  }
-                }
-
-                // Rute perjalanan dari riwayat: tampilkan utuh dengan pin Start dan Finish.
-                function showRoute(arr) {
-                  if (!map || arr.length === 0) return;
-                  route.setLatLngs(arr);
-                  startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map);
-                  endPin = L.marker(arr[arr.length - 1], { icon: pin('r') }).addTo(map);
-                  if (arr.length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
-                  else { map.setView(arr[0], 17); }
-                }
-
-                // Posisi saat ini (tanpa tracking).
-                function setPosition(lat, lon, first) {
-                  if (!map) return;
-                  var p = [lat, lon];
-                  if (!marker) { marker = L.circleMarker(p, dotStyle(ACCENT)).addTo(map); }
-                  else { marker.setLatLng(p); }
-                  if (first) { map.setView(p, 17); } else if (follow) { map.panTo(p); }
-                }
-              </script>
-            </body>
-            </html>
-        """.trimIndent()
-    }
+    private fun mapHtml(): String = MapHtml.build(accentHex)
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
