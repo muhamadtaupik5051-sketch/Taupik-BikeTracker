@@ -3,6 +3,7 @@ package com.biketracker.app
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationListener
@@ -10,33 +11,48 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
+import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
- * Peta GPS (OpenStreetMap + Leaflet). Tiga mode:
- * 1. Riwayat   : menampilkan rute satu perjalanan (extra "route" = lat,lon,lat,lon,...)
+ * Peta GPS (OpenStreetMap / Satelit + Leaflet). Tiga mode:
+ * 1. Riwayat   : menampilkan rute satu perjalanan (extra "route" = lat,lon,lat,lon,... + ringkasan)
  * 2. Live      : saat tracking berjalan, rute diambil dari TrackerState
  * 3. Biasa     : menampilkan posisi saat ini
  */
 class MapActivity : Activity() {
 
+    private lateinit var t: AppTheme
     private lateinit var mapView: WebView
     private lateinit var statusText: TextView
     private lateinit var locationManager: LocationManager
     private val handler = Handler(Looper.getMainLooper())
 
+    private var accentColor = 0
     private var accentHex = "#26be7d"
+    private var mode = "Sepeda"
     private var pageReady = false
     private var viewRoute: List<DoubleArray>? = null
     private var sent = 0
     private var firstFix = true
     private var ownGps = false
+    private var satellite = false
+
+    private val tabs = ArrayList<TextView>()
+    private var distV: TextView? = null
+    private var timeV: TextView? = null
+    private var labelC: TextView? = null
+    private var valueC: TextView? = null
+    private var labelD: TextView? = null
+    private var valueD: TextView? = null
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -91,14 +107,75 @@ class MapActivity : Activity() {
         }
     }
 
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun round(color: Int, r: Int) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(r).toFloat()
+    }
+
+    private fun mapButton(label: String, action: () -> Unit) = TextView(this).apply {
+        text = label
+        textSize = 20f
+        setTextColor(t.text)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
+        elevation = dp(4).toFloat()
+        setOnClickListener { action() }
+    }
+
+    private fun styleTabs() {
+        tabs.forEachIndexed { i, v ->
+            val sel = (i == 1) == satellite
+            v.setTextColor(if (sel) onColor(accentColor) else t.muted)
+            v.background = if (sel) round(accentColor, 15) else null
+        }
+    }
+
+    private fun applyLayer() {
+        styleTabs()
+        if (pageReady) {
+            mapView.evaluateJavascript("setLayer('${if (satellite) "sat" else "osm"}')", null)
+        }
+    }
+
+    private fun statBox(label: String): Triple<View, TextView, TextView> {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = round(t.bg, 14)
+        }
+        val l = TextView(this).apply { text = label; textSize = 11f; setTextColor(t.muted) }
+        val v = TextView(this).apply {
+            text = "--"; textSize = 17f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+        }
+        box.addView(l)
+        box.addView(v, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        return Triple(box, l, v)
+    }
+
+    private fun legendChip(color: Int, label: String): View {
+        val chip = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(12), dp(6))
+            background = round(t.bg, 16)
+        }
+        chip.addView(View(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+        }, LinearLayout.LayoutParams(dp(10), dp(10)))
+        chip.addView(TextView(this).apply {
+            text = label; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
+        return chip
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
 
-        val t = Themes.current(this)
+        t = Themes.current(this)
         Themes.styleWindow(this, t)
-        accentHex = String.format("#%06X", 0xFFFFFF and t.accent)
 
         val flat = intent?.getDoubleArrayExtra("route")
         if (flat != null && flat.size >= 2) {
@@ -110,6 +187,10 @@ class MapActivity : Activity() {
             }
             viewRoute = list
         }
+        mode = intent?.getStringExtra("mode") ?: TrackerState.mode
+        accentColor = Themes.modeAccent(mode)
+        accentHex = String.format("#%06X", 0xFFFFFF and accentColor)
+        val showPanel = viewRoute != null || TrackerState.running
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -119,13 +200,55 @@ class MapActivity : Activity() {
             }
         }
 
+        // Judul + tombol kembali
+        val header = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(8), dp(16), 0)
+        }
+        header.addView(TextView(this).apply {
+            text = "←"
+            textSize = 24f
+            setTextColor(t.text)
+            gravity = Gravity.CENTER
+            setOnClickListener { finish() }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header.addView(TextView(this).apply {
+            text = if (viewRoute != null) "Rute Aktivitas" else "Peta Rute"
+            textSize = 18f
+            setTextColor(t.text)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        root.addView(header)
+
+        // Tab Peta | Satelit
+        val tabRow = LinearLayout(this).apply {
+            background = round(t.surface, 18)
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+        }
+        listOf("Peta", "Satelit").forEachIndexed { i, name ->
+            val v = TextView(this).apply {
+                text = name
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(dp(18), 0, dp(18), 0)
+                setOnClickListener { satellite = i == 1; applyLayer() }
+            }
+            tabs.add(v)
+            tabRow.addView(v, LinearLayout.LayoutParams(-2, dp(30)))
+        }
+        styleTabs()
+        root.addView(tabRow, LinearLayout.LayoutParams(-2, -2).apply {
+            leftMargin = dp(16); topMargin = dp(4); bottomMargin = dp(8)
+        })
+
         statusText = TextView(this).apply {
             text = "Menyiapkan peta GPS..."
-            textSize = 14f
-            setTextColor(t.text)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(40, 28, 40, 28)
+            textSize = 12f
+            setTextColor(t.muted)
+            setPadding(dp(16), 0, dp(16), dp(6))
         }
+        root.addView(statusText)
 
         mapView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -134,29 +257,77 @@ class MapActivity : Activity() {
             webViewClient = WebViewClient()
         }
 
-        val backButton = Button(this).apply {
-            text = "KEMBALI"
-            isAllCaps = false
-            setTextColor(onColor(t.accent))
-            background = GradientDrawable().apply {
-                setColor(t.accent); cornerRadius = 48f
-            }
-            stateListAnimator = null
-            setOnClickListener { finish() }
-        }
+        // Peta + tombol zoom dan lokasi di sisi kanan
+        val mapArea = FrameLayout(this)
+        mapArea.addView(mapView, FrameLayout.LayoutParams(-1, -1))
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val gap = dp(8)
+        controls.addView(mapButton("+") {
+            if (pageReady) mapView.evaluateJavascript("if(map)map.zoomIn()", null)
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { bottomMargin = gap })
+        controls.addView(mapButton("−") {
+            if (pageReady) mapView.evaluateJavascript("if(map)map.zoomOut()", null)
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { bottomMargin = gap })
+        controls.addView(mapButton("◎") {
+            if (pageReady) mapView.evaluateJavascript("locate()", null)
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        mapArea.addView(controls, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            rightMargin = dp(12)
+        })
+        root.addView(mapArea, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        root.addView(statusText)
-        root.addView(
-            mapView,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-        )
-        root.addView(
-            backButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(40, 20, 40, 28) }
-        )
+        // Ringkasan di bawah peta (hanya untuk rute riwayat dan tracking aktif)
+        if (showPanel) {
+            val panel = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(16))
+                background = GradientDrawable().apply {
+                    setColor(t.surface)
+                    val r = dp(20).toFloat()
+                    cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+                }
+            }
+            val legend = LinearLayout(this)
+            legend.addView(legendChip(0xFF27D282.toInt(), "Start"))
+            legend.addView(legendChip(0xFFFF3B3B.toInt(), "Finish"),
+                LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+            legend.addView(legendChip(accentColor, "Garis rute"),
+                LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+            panel.addView(legend)
+
+            panel.addView(TextView(this).apply {
+                text = "Ringkasan Aktivitas"
+                textSize = 14f
+                setTextColor(t.text)
+                typeface = Typeface.DEFAULT_BOLD
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(12) })
+
+            val dist = statBox("Jarak")
+            val time = statBox("Durasi")
+            val c = statBox("Rata-rata")
+            val d = statBox("Maksimum")
+            distV = dist.third; timeV = time.third
+            labelC = c.second; valueC = c.third
+            labelD = d.second; valueD = d.third
+            val row1 = LinearLayout(this)
+            row1.addView(dist.first, LinearLayout.LayoutParams(0, -2, 1f))
+            row1.addView(time.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+            val row2 = LinearLayout(this)
+            row2.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f))
+            row2.addView(d.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+            panel.addView(row1, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            panel.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            root.addView(panel)
+
+            if (viewRoute != null) {
+                updateStats(
+                    intent.getFloatExtra("km", 0f),
+                    intent.getLongExtra("elapsed", 0L),
+                    intent.getFloatExtra("avg", 0f),
+                    intent.getFloatExtra("max", 0f)
+                )
+            }
+        }
         setContentView(root)
 
         mapView.loadDataWithBaseURL(
@@ -175,8 +346,36 @@ class MapActivity : Activity() {
         }, 20000)
     }
 
+    /** Isi kartu ringkasan. Dua kartu terakhir menyesuaikan aktivitas. */
+    private fun updateStats(km: Float, elapsedMs: Long, avgKmh: Float, maxKmh: Float) {
+        distV?.text = Fmt.dec(km, 2) + " km"
+        timeV?.text = Fmt.time(elapsedMs)
+        when (mode) {
+            "Lari" -> {
+                val pace = if (avgKmh >= 1.5f) (3600f / avgKmh).roundToInt() else null
+                labelC?.text = "Pace rata-rata"
+                valueC?.text = Fmt.pace(pace) + " /km"
+                labelD?.text = "Maksimum"
+                valueD?.text = Fmt.dec(maxKmh, 1) + " km/jam"
+            }
+            "Jalan" -> {
+                labelC?.text = "Langkah"
+                valueC?.text = Fmt.int((km * 1000f * TrackerState.STEPS_PER_METER).roundToInt())
+                labelD?.text = "Rata-rata"
+                valueD?.text = Fmt.dec(avgKmh, 1) + " km/jam"
+            }
+            else -> {
+                labelC?.text = "Rata-rata"
+                valueC?.text = Fmt.dec(avgKmh, 1) + " km/jam"
+                labelD?.text = "Maksimum"
+                valueD?.text = Fmt.dec(maxKmh, 1) + " km/jam"
+            }
+        }
+    }
+
     /** Dipanggil sekali ketika Leaflet sudah siap. */
     private fun onMapReady() {
+        applyLayer()
         val vr = viewRoute
         when {
             vr != null -> {
@@ -202,10 +401,11 @@ class MapActivity : Activity() {
             sent = r.size
         }
         val km = TrackerState.distanceMeters / 1000f
+        updateStats(km, TrackerState.currentElapsed(), TrackerState.averageSpeed(), TrackerState.maxSpeedKmh)
         statusText.text = if (TrackerState.paused) {
-            String.format(Locale.US, "Aktivitas dijeda • %.2f km", km)
+            String.format(Locale.US, "Aktivitas dijeda • %d titik", r.size)
         } else {
-            String.format(Locale.US, "Merekam rute • %d titik • %.2f km", r.size, km)
+            String.format(Locale.US, "Merekam rute • %d titik", r.size)
         }
     }
 
@@ -255,6 +455,31 @@ class MapActivity : Activity() {
         }
     }
 
+    /** Hentikan GPS dan pembaruan saat layar peta tidak terlihat, supaya baterai hemat. */
+    override fun onPause() {
+        handler.removeCallbacks(ticker)
+        try {
+            locationManager.removeUpdates(gpsListener)
+        } catch (e: Exception) {
+        }
+        ownGps = false
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pageReady) {
+            when {
+                viewRoute != null -> {}
+                TrackerState.running -> {
+                    handler.removeCallbacks(ticker)
+                    handler.postDelayed(ticker, 1000)
+                }
+                else -> startOwnGps()
+            }
+        }
+    }
+
     private fun mapHtml(): String {
         return """
             <!DOCTYPE html>
@@ -263,24 +488,43 @@ class MapActivity : Activity() {
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <style>
                 html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
+                .pin { width: 26px; height: 26px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+                       border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); }
+                .pin.g { background: #27D282; }
+                .pin.r { background: #FF3B3B; }
               </style>
             </head>
             <body>
               <div id="map"></div>
               <script>
-                var map = null, route = null, marker = null;
+                var map = null, route = null, marker = null, startPin = null, endPin = null;
+                var osm = null, sat = null, follow = true;
                 var ACCENT = '$accentHex';
 
                 function dotStyle(color) {
                   return { radius: 8, color: '#ffffff', weight: 3, fillColor: color, fillOpacity: 1 };
                 }
 
+                function pin(cls) {
+                  return L.divIcon({
+                    className: '',
+                    html: '<div class="pin ' + cls + '"></div>',
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 39]
+                  });
+                }
+
                 function initMap() {
-                  map = L.map('map').setView([-2.5, 118], 5);
-                  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                  map = L.map('map', { zoomControl: false }).setView([-2.5, 118], 5);
+                  osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19,
                     attribution: '&copy; OpenStreetMap contributors'
                   }).addTo(map);
+                  sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 19,
+                    attribution: 'Tiles &copy; Esri'
+                  });
+                  map.on('dragstart', function () { follow = false; });
                   route = L.polyline([], { color: ACCENT, weight: 5 }).addTo(map);
                   Bridge.onReady();
                 }
@@ -303,27 +547,45 @@ class MapActivity : Activity() {
                   'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'
                 ], 0);
 
+                // Ganti tampilan peta: 'osm' (Peta) atau 'sat' (Satelit).
+                function setLayer(n) {
+                  if (!map) return;
+                  if (n === 'sat') { if (map.hasLayer(osm)) map.removeLayer(osm); if (!map.hasLayer(sat)) sat.addTo(map); }
+                  else { if (map.hasLayer(sat)) map.removeLayer(sat); if (!map.hasLayer(osm)) osm.addTo(map); }
+                }
+
+                // Tombol lokasi: kembali mengikuti posisi, atau tampilkan seluruh rute.
+                function locate() {
+                  if (!map) return;
+                  follow = true;
+                  if (marker) { map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16)); }
+                  else if (route && route.getLatLngs().length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
+                  else if (endPin) { map.setView(endPin.getLatLng(), 16); }
+                }
+
                 // Rute yang sedang direkam: tambahkan titik baru dan ikuti posisi terakhir.
                 function addPoints(arr) {
                   if (!map || arr.length === 0) return;
+                  var first = route.getLatLngs().length === 0;
                   for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); }
                   var last = arr[arr.length - 1];
+                  if (first) { startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map); }
                   if (!marker) {
                     marker = L.circleMarker(last, dotStyle(ACCENT)).addTo(map);
                     map.setView(last, 17);
                   } else {
                     marker.setLatLng(last);
-                    map.panTo(last);
+                    if (follow) map.panTo(last);
                   }
                 }
 
-                // Rute perjalanan dari riwayat: tampilkan utuh.
+                // Rute perjalanan dari riwayat: tampilkan utuh dengan pin Start dan Finish.
                 function showRoute(arr) {
                   if (!map || arr.length === 0) return;
                   route.setLatLngs(arr);
-                  L.circleMarker(arr[0], dotStyle('#27D282')).addTo(map);
-                  L.circleMarker(arr[arr.length - 1], dotStyle('#FF3B3B')).addTo(map);
-                  if (arr.length > 1) { map.fitBounds(route.getBounds(), { padding: [30, 30] }); }
+                  startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map);
+                  endPin = L.marker(arr[arr.length - 1], { icon: pin('r') }).addTo(map);
+                  if (arr.length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
                   else { map.setView(arr[0], 17); }
                 }
 
@@ -333,7 +595,7 @@ class MapActivity : Activity() {
                   var p = [lat, lon];
                   if (!marker) { marker = L.circleMarker(p, dotStyle(ACCENT)).addTo(map); }
                   else { marker.setLatLng(p); }
-                  if (first) { map.setView(p, 17); } else { map.panTo(p); }
+                  if (first) { map.setView(p, 17); } else if (follow) { map.panTo(p); }
                 }
               </script>
             </body>
