@@ -10,10 +10,14 @@ import kotlin.math.roundToInt
  * Semua akses terjadi di main thread (callback GPS juga dikirim ke main looper).
  */
 object TrackerState {
+    /** Perkiraan langkah per meter untuk mode Jalan (tanpa sensor langkah). */
+    const val STEPS_PER_METER = 1.3f
+
     var running = false
     var paused = false
     var mode = "Sepeda"
-    var targetKm = 10
+    /** Target dalam satuan mode: km untuk Sepeda/Lari, langkah untuk Jalan. */
+    var target = 10
     var distanceMeters = 0f
     var speedKmh = 0f
     var maxSpeedKmh = 0f
@@ -22,7 +26,16 @@ object TrackerState {
     var climbM = 0f
     var gpsStatus = "Mencari GPS…"
     val route = mutableListOf<DoubleArray>()
+    /** Waktu (detik) tiap kilometer penuh yang sudah diselesaikan. */
+    val splits = mutableListOf<Int>()
 
+    /** Contoh kecepatan (km/jam) tiap beberapa detik, untuk grafik di layar tracking. */
+    val speedSamples = mutableListOf<Float>()
+
+    private var sampleEveryMs = 5000L
+    private var lastSampleAt = 0L
+    private var splitStartElapsed = 0L
+    private var smoothKmh = 0f
     private var refAlt = Double.NaN
     private var lastLocation: Location? = null
 
@@ -32,8 +45,31 @@ object TrackerState {
         else -> 20f
     }
 
-    fun start(target: Int) {
-        targetKm = target
+    fun steps(): Int = (distanceMeters * STEPS_PER_METER).roundToInt()
+
+    /** Kemajuan menuju target, dalam satuan target (km atau langkah). */
+    fun progressValue(): Float = if (mode == "Jalan") steps().toFloat() else distanceMeters / 1000f
+
+    fun paceNowSec(): Int? = if (smoothKmh >= 1.5f) (3600f / smoothKmh).roundToInt() else null
+
+    fun avgPaceSec(): Int? {
+        val a = averageSpeed()
+        return if (a >= 1.5f) (3600f / a).roundToInt() else null
+    }
+
+    fun bestSplitSec(): Int? = splits.minOrNull()
+
+    /** Panjang sumbu waktu grafik, dalam menit. */
+    fun chartMinutes(): Float = speedSamples.size * sampleEveryMs / 60000f
+
+    fun start(targetValue: Int) {
+        target = targetValue
+        smoothKmh = 0f
+        splits.clear()
+        splitStartElapsed = 0L
+        speedSamples.clear()
+        sampleEveryMs = 5000L
+        lastSampleAt = 0L
         distanceMeters = 0f
         speedKmh = 0f
         maxSpeedKmh = 0f
@@ -53,12 +89,14 @@ object TrackerState {
         elapsedBeforeRun += System.currentTimeMillis() - runStartedAt
         paused = true
         speedKmh = 0f
+        smoothKmh = 0f
         gpsStatus = "Aktivitas dijeda"
     }
 
     fun resume() {
         if (!running || !paused) return
         paused = false
+        smoothKmh = 0f
         runStartedAt = System.currentTimeMillis()
         lastLocation = null
         gpsStatus = "Menunggu lokasi…"
@@ -70,6 +108,7 @@ object TrackerState {
         running = false
         paused = false
         speedKmh = 0f
+        smoothKmh = 0f
     }
 
     fun currentElapsed(): Long =
@@ -116,9 +155,35 @@ object TrackerState {
         }
         lastLocation = location
 
+        val kmDone = (distanceMeters / 1000f).toInt()
+        while (splits.size < kmDone) {
+            val e = currentElapsed()
+            splits.add(((e - splitStartElapsed) / 1000L).toInt())
+            splitStartElapsed = e
+        }
+
         val measured = if (location.hasSpeed()) location.speed * 3.6f else 0f
         speedKmh = if (measured in 0f..speedLimit()) measured else 0f
+        smoothKmh = if (smoothKmh <= 0f) speedKmh else smoothKmh * 0.6f + speedKmh * 0.4f
         if (speedKmh > maxSpeedKmh) maxSpeedKmh = speedKmh
+
+        val nowMs = currentElapsed()
+        if (nowMs - lastSampleAt >= sampleEveryMs) {
+            speedSamples.add(smoothKmh)
+            lastSampleAt = nowMs
+            if (speedSamples.size > 720) {
+                // Gabungkan dua titik jadi satu supaya grafik tetap ringan pada aktivitas panjang.
+                val merged = ArrayList<Float>()
+                var i = 0
+                while (i + 1 < speedSamples.size) {
+                    merged.add((speedSamples[i] + speedSamples[i + 1]) / 2f)
+                    i += 2
+                }
+                speedSamples.clear()
+                speedSamples.addAll(merged)
+                sampleEveryMs *= 2L
+            }
+        }
 
         val last = route.lastOrNull()
         var moved = true
@@ -157,7 +222,9 @@ object TrackerState {
         sp(c).edit()
             .putBoolean("active", true)
             .putString("mode", mode)
-            .putInt("target", targetKm)
+            .putInt("target", target)
+            .putString("splits", splits.joinToString(","))
+            .putLong("splitStart", splitStartElapsed)
             .putFloat("dist", distanceMeters)
             .putFloat("max", maxSpeedKmh)
             .putLong("elapsed", currentElapsed())
@@ -177,7 +244,7 @@ object TrackerState {
         val p = sp(c)
         if (!p.getBoolean("active", false)) return false
         mode = p.getString("mode", "Sepeda") ?: "Sepeda"
-        targetKm = p.getInt("target", 10)
+        target = p.getInt("target", 10)
         distanceMeters = p.getFloat("dist", 0f)
         maxSpeedKmh = p.getFloat("max", 0f)
         elapsedBeforeRun = p.getLong("elapsed", 0L)
@@ -189,6 +256,12 @@ object TrackerState {
             val lo = q.getOrNull(1)?.toDoubleOrNull()
             if (la != null && lo != null) route.add(doubleArrayOf(la, lo))
         }
+        splits.clear()
+        for (x in (p.getString("splits", "") ?: "").split(",")) {
+            x.toIntOrNull()?.let { splits.add(it) }
+        }
+        splitStartElapsed = p.getLong("splitStart", elapsedBeforeRun)
+        smoothKmh = 0f
         runStartedAt = System.currentTimeMillis()
         lastLocation = null
         refAlt = Double.NaN
