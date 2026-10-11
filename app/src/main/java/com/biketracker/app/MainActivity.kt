@@ -1,4 +1,3 @@
-
 package com.biketracker.app
 
 import android.Manifest
