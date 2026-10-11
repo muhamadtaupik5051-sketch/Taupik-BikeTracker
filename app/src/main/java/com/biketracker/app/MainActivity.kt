@@ -7,10 +7,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -35,6 +35,9 @@ internal class Rec(val f: List<String>) {
     val avg get() = f[4]
     val target get() = f.getOrNull(6)?.toFloatOrNull() ?: 0f
     val reached get() = target > 0f && km >= target
+    val maxSpeed get() = f.getOrNull(5) ?: "0.0"
+    val kcal get() = f.getOrNull(8) ?: "0"
+    val climb get() = f.getOrNull(9) ?: "0"
     val route: List<DoubleArray> by lazy {
         (f.getOrNull(7) ?: "").split(";").mapNotNull { s ->
             val p = s.split(",")
@@ -48,26 +51,27 @@ internal class Rec(val f: List<String>) {
 class MainActivity : Activity() {
 
     private lateinit var t: AppTheme
-    private lateinit var locationManager: LocationManager
 
-    private var mode = "Sepeda"
+    private var mode: String
+        get() = TrackerState.mode
+        set(v) { TrackerState.mode = v }
     private var currentTab = 0
     private var filter = "Semua"
     private var digitalMode = false
+    private var inDetail = false
+    private var pendingResume = false
+    private var splashDone = false
 
-    private var lastLocation: Location? = null
-    private var distanceMeters = 0f
-    private var speedKmh = 0f
-    private var maxSpeedKmh = 0f
-    private var elapsedBeforeRun = 0L
-    private var runStartedAt = 0L
-    private var running = false
-    private var paused = false
-    private var climbM = 0f
-    private var refAlt = Double.NaN
-    private var targetKm = 10
-    private var gpsStatus = "Mencari GPS…"
-    private val route = mutableListOf<DoubleArray>()
+    // Status pelacakan disimpan di TrackerState supaya tetap hidup bersama TrackingService.
+    private val running get() = TrackerState.running
+    private val paused get() = TrackerState.paused
+    private val distanceMeters get() = TrackerState.distanceMeters
+    private val speedKmh get() = TrackerState.speedKmh
+    private val maxSpeedKmh get() = TrackerState.maxSpeedKmh
+    private val climbM get() = TrackerState.climbM
+    private val targetKm get() = TrackerState.targetKm
+    private val gpsStatus get() = TrackerState.gpsStatus
+    private val route get() = TrackerState.route
 
     private lateinit var gauge: GaugeView
     private lateinit var routeView: RouteView
@@ -95,64 +99,71 @@ class MainActivity : Activity() {
         }
     }
 
-    private val gpsListener = object : LocationListener {
-        override fun onLocationChanged(location: Location) {
-            if (location.accuracy > 25f) {
-                setGps("Mencari GPS…")
-                return
-            }
-            setGps("GPS ±${location.accuracy.toInt()} m")
-            if (!running || paused) return
-
-            val previous = lastLocation
-            if (previous != null && location.time > previous.time) {
-                val seconds = (location.time - previous.time) / 1000f
-                val delta = previous.distanceTo(location)
-                if (seconds > 0f && delta in 0.5f..100f && delta / seconds * 3.6f <= speedLimit()) {
-                    distanceMeters += delta
-                }
-            }
-            lastLocation = location
-
-            val measured = if (location.hasSpeed()) location.speed * 3.6f else 0f
-            speedKmh = if (measured in 0f..speedLimit()) measured else 0f
-            if (speedKmh > maxSpeedKmh) maxSpeedKmh = speedKmh
-
-            val last = route.lastOrNull()
-            var moved = true
-            if (last != null) {
-                val res = FloatArray(1)
-                Location.distanceBetween(last[0], last[1], location.latitude, location.longitude, res)
-                moved = res[0] >= 3f
-            }
-            if (moved && route.size < 5000) route.add(doubleArrayOf(location.latitude, location.longitude))
-
-            if (location.hasAltitude()) {
-                val alt = location.altitude
-                if (refAlt.isNaN()) refAlt = alt
-                else if (alt - refAlt >= 3.0) { climbM += (alt - refAlt).toFloat(); refAlt = alt }
-                else if (refAlt - alt >= 3.0) refAlt = alt
-            }
-            refreshTracking()
-        }
-
-        override fun onProviderEnabled(provider: String) { setGps("Menunggu lokasi…") }
-
-        override fun onProviderDisabled(provider: String) {
-            setGps("GPS mati")
-            speedKmh = 0f
-            refreshTracking()
-        }
-
-        @Suppress("DEPRECATION")
-        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         applyTheme()
-        showHome()
+        when {
+            // Service masih berjalan (mis. aplikasi dibuka lagi dari notifikasi)
+            TrackerState.running -> {
+                splashDone = true
+                showTracking()
+                if (!paused) handler.post(timer)
+            }
+            savedInstanceState == null -> showSplash()
+            else -> {
+                splashDone = true
+                showHome()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (running && !paused && currentTab == -1) {
+            handler.removeCallbacks(timer)
+            handler.post(timer)
+        }
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(timer)
+        super.onPause()
+    }
+
+    private fun showSplash() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(t.bg)
+        }
+        root.addView(tv("🚴", 64f, t.text).apply { gravity = Gravity.CENTER })
+        root.add(tv("R I D E T R A C K   P R O", 13f, t.accent, true).apply { gravity = Gravity.CENTER }, 14)
+        root.add(tv("MUHAMAD TAUPIK", 24f, t.text, true).apply { gravity = Gravity.CENTER }, 6)
+        setContentView(root)
+
+        val goHome = Runnable {
+            if (!splashDone && !isFinishing) {
+                splashDone = true
+                showHome()
+                checkSavedSession()
+            }
+        }
+        root.setOnClickListener { handler.removeCallbacksAndMessages(null); goHome.run() }
+        handler.postDelayed(goHome, 1500)
+    }
+
+    /** Jika aplikasi sempat dimatikan sistem saat merekam, tawarkan untuk melanjutkan. */
+    private fun checkSavedSession() {
+        if (TrackerState.running || !TrackerState.hasSaved(this)) return
+        AlertDialog.Builder(this)
+            .setTitle("Aktivitas belum selesai")
+            .setMessage("Ada perjalanan yang belum disimpan karena aplikasi sempat tertutup. Lanjutkan?")
+            .setPositiveButton("Lanjutkan") { _, _ ->
+                if (TrackerState.restore(this)) showTracking() else TrackerState.clearSaved(this)
+            }
+            .setNegativeButton("Buang") { _, _ -> TrackerState.clearSaved(this) }
+            .setCancelable(false)
+            .show()
     }
 
     private fun applyTheme() {
@@ -160,7 +171,6 @@ class MainActivity : Activity() {
         Themes.styleWindow(this, t)
     }
 
-    private fun speedLimit() = when (mode) { "Sepeda" -> 80f; "Lari" -> 30f; else -> 20f }
     private fun scaleFor(m: String) = when (m) { "Sepeda" -> 60f; "Lari" -> 30f; else -> 12f }
 
     // ---------- UI helpers ----------
@@ -211,6 +221,7 @@ class MainActivity : Activity() {
 
     private fun show(tab: Int, body: LinearLayout) {
         currentTab = tab
+        inDetail = false
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(t.bg)
@@ -329,7 +340,7 @@ class MainActivity : Activity() {
         val c2 = Calendar.getInstance()
         for (line in rawRecords()) {
             val r = parse(line) ?: continue
-            val d = (try { fmt.parse(r.date) } catch (_: Exception) { null }) ?: continue
+            val d = (try { fmt.parse(r.date) } catch (e: Exception) { null }) ?: continue
             if (d.time < start) continue
             c2.time = d
             out[(c2.get(Calendar.DAY_OF_WEEK) + 5) % 7] += r.km
@@ -338,7 +349,7 @@ class MainActivity : Activity() {
         return Pair(out, week)
     }
 
-    private fun tripCard(rec: Rec, detailed: Boolean, onLong: (() -> Unit)? = null): LinearLayout {
+    private fun tripCard(rec: Rec, detailed: Boolean, onClick: (() -> Unit)? = null, onLong: (() -> Unit)? = null): LinearLayout {
         val c = card(t.surface, 10, 16).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -356,6 +367,7 @@ class MainActivity : Activity() {
                 if (rec.reached) t.good else t.muted), 2)
         }
         c.addView(right)
+        if (onClick != null) c.setOnClickListener { onClick() }
         if (onLong != null) c.setOnLongClickListener { onLong(); true }
         return c
     }
@@ -419,61 +431,82 @@ class MainActivity : Activity() {
 
         r.add(btn("▶   MULAI AKTIVITAS", t.good, 30) { startTracking() }, 12, 0f, dp(58))
 
-        val last = rawRecords().mapNotNull { parse(it) }.take(2)
+        val last = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }.take(2)
         if (last.isNotEmpty()) {
             r.add(tv("Terakhir", 11f, t.muted, true), 16)
-            for (rec in last) r.add(tripCard(rec, false), 8)
+            for ((idx, rec) in last) r.add(tripCard(rec, false, { showDetail(idx, rec) }), 8)
         }
         show(0, r)
     }
 
-    private fun startTracking() {
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION), 100)
-            return
-        }
-        distanceMeters = 0f; speedKmh = 0f; maxSpeedKmh = 0f
-        elapsedBeforeRun = 0L
-        runStartedAt = System.currentTimeMillis()
-        lastLocation = null
-        climbM = 0f; refAlt = Double.NaN
-        route.clear()
-        targetKm = Themes.target(this)
-        gpsStatus = "Mencari GPS…"
-        running = true; paused = false
+    private fun hasFine() =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-        showTracking()
-        requestGpsUpdates()
-        handler.removeCallbacks(timer)
-        handler.post(timer)
+    private fun askPermissions() {
+        val list = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= 33) list.add(Manifest.permission.POST_NOTIFICATIONS)
+        requestPermissions(list.toTypedArray(), 100)
     }
 
-    private fun requestGpsUpdates() {
+    private fun showLocationDenied() {
+        AlertDialog.Builder(this)
+            .setTitle("Izin lokasi presisi diperlukan")
+            .setMessage("Izinkan akses lokasi dengan pilihan \"Presisi/Tepat\" agar jarak dan kecepatan dihitung dari GPS.")
+            .setPositiveButton("Buka Pengaturan") { _, _ ->
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Buka Pengaturan > Aplikasi > izin lokasi.", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun sendService(action: String) {
+        val i = Intent(this, TrackingService::class.java).setAction(action)
         try {
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
-            setGps("Menunggu lokasi…")
-            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, gpsListener)
-        } catch (_: Exception) {
-            setGps("GPS tidak tersedia")
+            val foreground = action == TrackingService.ACTION_START || action == TrackingService.ACTION_RESUME
+            if (foreground && Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Pelacakan latar belakang gagal dimulai.", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun startTracking() {
+        if (!hasFine()) {
+            pendingResume = false
+            askPermissions()
+            return
+        }
+        TrackerState.start(Themes.target(this))
+        TrackerState.persist(this)
+        sendService(TrackingService.ACTION_START)
+        showTracking()
+        handler.removeCallbacks(timer)
+        handler.post(timer)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100) {
-            if (grantResults.isNotEmpty() && grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
-                startTracking()
+            if (hasFine()) {
+                if (pendingResume) {
+                    pendingResume = false
+                    resumeTracking()
+                } else {
+                    startTracking()
+                }
             } else {
-                Toast.makeText(this, "Izin lokasi diperlukan untuk melacak perjalanan.", Toast.LENGTH_LONG).show()
+                pendingResume = false
+                showLocationDenied()
             }
         }
-    }
-
-    private fun setGps(msg: String) {
-        gpsStatus = msg
-        if (::gpsText.isInitialized) gpsText.text = msg
     }
 
     private fun showTracking() {
@@ -544,39 +577,20 @@ class MainActivity : Activity() {
         refreshTracking()
     }
 
-    private fun currentElapsed(): Long =
-        elapsedBeforeRun + if (running && !paused) System.currentTimeMillis() - runStartedAt else 0L
+    private fun currentElapsed(): Long = TrackerState.currentElapsed()
 
     private fun formatTime(ms: Long): String {
         val s = (ms / 1000L).coerceAtLeast(0L)
         return String.format(Locale.US, "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
     }
 
-    private fun averageSpeed(): Float {
-        val h = currentElapsed() / 3600000f
-        return if (h > 0f) (distanceMeters / 1000f) / h else 0f
-    }
+    private fun averageSpeed(): Float = TrackerState.averageSpeed()
 
-    private fun calories(): Int {
-        val h = currentElapsed() / 3600000f
-        if (h <= 0f) return 0
-        val avg = averageSpeed()
-        val met = when (mode) {
-            "Sepeda" -> when {
-                avg < 16f -> 4f
-                avg < 19f -> 6f
-                avg < 22f -> 8f
-                avg < 26f -> 10f
-                else -> 12f
-            }
-            "Lari" -> maxOf(6f, avg)
-            else -> if (avg < 5.5f) 3.5f else 4.3f
-        }
-        return (met * Themes.weight(this) * h).roundToInt()
-    }
+    private fun calories(): Int = TrackerState.calories(Themes.weight(this))
 
     private fun refreshTracking() {
         if (!::gauge.isInitialized || !::targetBar.isInitialized) return
+        if (::gpsText.isInitialized) gpsText.text = gpsStatus
         val km = distanceMeters / 1000f
         gauge.speed = speedKmh
         gauge.maxSpeed = maxSpeedKmh
@@ -610,59 +624,78 @@ class MainActivity : Activity() {
     private fun openMap() {
         try {
             startActivity(Intent(this, MapActivity::class.java))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             Toast.makeText(this, "Halaman peta belum siap.", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun pauseTracking() {
         if (!running || paused) return
-        elapsedBeforeRun += System.currentTimeMillis() - runStartedAt
-        paused = true
-        speedKmh = 0f
+        TrackerState.pause()
+        TrackerState.persist(this)
         handler.removeCallbacks(timer)
-        stopGpsUpdates()
-        setGps("Aktivitas dijeda")
+        sendService(TrackingService.ACTION_PAUSE)
         showTracking()
     }
 
     private fun resumeTracking() {
         if (!running || !paused) return
-        paused = false
-        runStartedAt = System.currentTimeMillis()
-        lastLocation = null
+        if (!hasFine()) {
+            pendingResume = true
+            askPermissions()
+            return
+        }
+        TrackerState.resume()
+        sendService(TrackingService.ACTION_RESUME)
         showTracking()
-        requestGpsUpdates()
         handler.removeCallbacks(timer)
         handler.post(timer)
     }
 
-    private fun stopGpsUpdates() {
-        try { locationManager.removeUpdates(gpsListener) } catch (_: Exception) {}
-    }
-
     private fun finishTracking() {
         if (!running) return
+        val km = distanceMeters / 1000f
+        val b = AlertDialog.Builder(this).setTitle("Selesaikan aktivitas?")
+        if (km >= 0.01f) {
+            b.setMessage(String.format(Locale.US, "Jarak %.2f km • durasi %s", km, formatTime(currentElapsed())))
+            b.setPositiveButton("Simpan") { _, _ -> completeTracking(true) }
+        } else {
+            b.setMessage("Belum ada jarak yang terekam, jadi aktivitas ini belum bisa disimpan.")
+        }
+        b.setNegativeButton("Buang") { _, _ -> completeTracking(false) }
+        b.setNeutralButton("Lanjut", null)
+        b.show()
+    }
+
+    private fun completeTracking(save: Boolean) {
+        if (!running) return
         val elapsed = currentElapsed()
-        elapsedBeforeRun = elapsed
-        running = false
-        paused = false
         handler.removeCallbacks(timer)
-        stopGpsUpdates()
-        speedKmh = 0f
-        saveActivity(elapsed)
-        showSummary(elapsed)
+        TrackerState.finish(elapsed)
+        sendService(TrackingService.ACTION_STOP)
+        TrackerState.clearSaved(this)
+        if (save) {
+            saveActivity(elapsed)
+            showSummary(elapsed)
+        } else {
+            Toast.makeText(this, "Aktivitas dibuang.", Toast.LENGTH_SHORT).show()
+            showHome()
+        }
     }
 
     private fun encodeRoute(): String {
         if (route.isEmpty()) return ""
-        val step = maxOf(1, Math.ceil(route.size / 60.0).toInt())
+        val step = maxOf(1, Math.ceil(route.size / 300.0).toInt())
         val sb = StringBuilder()
         var i = 0
         while (i < route.size) {
             if (sb.isNotEmpty()) sb.append(';')
             sb.append(String.format(Locale.US, "%.5f,%.5f", route[i][0], route[i][1]))
             i += step
+        }
+        if ((route.size - 1) % step != 0) {
+            val last = route[route.size - 1]
+            sb.append(';').append(String.format(Locale.US, "%.5f,%.5f", last[0], last[1]))
         }
         return sb.toString()
     }
@@ -756,7 +789,7 @@ class MainActivity : Activity() {
             r.add(e, 12)
         } else {
             for ((idx, rec) in shown) {
-                r.add(tripCard(rec, true) {
+                r.add(tripCard(rec, true, { showDetail(idx, rec) }) {
                     confirm("Hapus perjalanan ini?") {
                         val list = rawRecords()
                         if (idx < list.size) list.removeAt(idx)
@@ -765,7 +798,7 @@ class MainActivity : Activity() {
                     }
                 }, 8)
             }
-            r.add(tv("Tekan lama untuk menghapus satu perjalanan", 11f, t.muted).apply {
+            r.add(tv("Ketuk untuk detail • tekan lama untuk menghapus", 11f, t.muted).apply {
                 gravity = Gravity.CENTER
             }, 10)
             r.add(btn("Hapus semua riwayat", t.bad) {
@@ -775,6 +808,59 @@ class MainActivity : Activity() {
             }, 10, 0f, dp(48))
         }
         show(2, r)
+    }
+
+    private fun showDetail(idx: Int, rec: Rec) {
+        val r = column()
+        title(r, "DETAIL AKTIVITAS", rec.date)
+
+        val hero = card(t.accent, 18, 24)
+        val on = onColor(t.accent)
+        hero.addView(tv("${icon(rec.mode)}  ${rec.mode}", 16f, on, true))
+        hero.add(mono(tv(String.format(Locale.US, "%.2f km", rec.km), 34f, on, true)), 2)
+        r.add(hero, 14)
+
+        r.add(RouteView(this, t).apply { points = rec.route; hint = "Rute tidak terekam" }, 10, 0f, dp(150))
+
+        if (rec.target > 0f) {
+            val tc = card(t.surface, 12, 16)
+            tc.addView(tv(
+                if (rec.reached) "✓ Target ${rec.target.toInt()} km tercapai"
+                else "Target ${rec.target.toInt()} km belum tercapai",
+                14f, if (rec.reached) t.good else t.text, true))
+            r.add(tc, 10)
+        }
+
+        statRow(r, statCard("Durasi", formatTime(rec.elapsed)),
+            statCard("Rata-rata", "${rec.avg} km/jam", t.good), 10)
+        statRow(r, statCard("Kecepatan maks.", "${rec.maxSpeed} km/jam", t.accent),
+            statCard("Kalori", "${rec.kcal} kkal"))
+        statRow(r, statCard("Tanjakan", "${rec.climb} m"),
+            statCard("Titik rute", rec.route.size.toString()))
+
+        if (rec.route.isNotEmpty()) {
+            r.add(btn("⌖   LIHAT DI PETA", t.good, 28) {
+                val flat = DoubleArray(rec.route.size * 2)
+                rec.route.forEachIndexed { i, p -> flat[i * 2] = p[0]; flat[i * 2 + 1] = p[1] }
+                try {
+                    startActivity(Intent(this, MapActivity::class.java).putExtra("route", flat))
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Halaman peta belum siap.", Toast.LENGTH_LONG).show()
+                }
+            }, 16, 0f, dp(54))
+        }
+        r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
+        r.add(btn("Hapus perjalanan ini", t.bad) {
+            confirm("Hapus perjalanan ini?") {
+                val list = rawRecords()
+                if (idx < list.size) list.removeAt(idx)
+                writeRecords(list)
+                showHistory()
+            }
+        }, 10, 0f, dp(48))
+
+        show(2, r)
+        inDetail = true
     }
 
     private fun showSettings() {
@@ -817,7 +903,7 @@ class MainActivity : Activity() {
             Themes.setKeepOn(this, !on); applyTheme(); showSettings()
         }, 8, 0f, dp(52))
 
-        r.add(tv("RideTrack Pro V2 • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+        r.add(tv("RideTrack Pro V3 • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
             gravity = Gravity.CENTER
         }, 20)
         show(3, r)
@@ -827,14 +913,14 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when {
             running -> moveTaskToBack(true)
+            inDetail -> showHistory()
             currentTab > 0 -> showHome()
             else -> super.onBackPressed()
         }
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(timer)
-        stopGpsUpdates()
+        handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 }
