@@ -14,6 +14,8 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 
 class MapActivity : Activity() {
 
@@ -21,6 +23,7 @@ class MapActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var locationManager: LocationManager
 
+    private var accentHex = "#26be7d"
     private var mapReady = false
     private var firstLocation = true
 
@@ -82,16 +85,24 @@ class MapActivity : Activity() {
         locationManager =
             getSystemService(LOCATION_SERVICE) as LocationManager
 
+        val t = Themes.current(this)
+        Themes.styleWindow(this, t)
+        accentHex = String.format("#%06X", 0xFFFFFF and t.accent)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(16, 24, 32))
+            setBackgroundColor(t.bg)
+            setOnApplyWindowInsetsListener { v, i ->
+                v.setPadding(0, i.systemWindowInsetTop, 0, i.systemWindowInsetBottom); i
+            }
         }
 
         statusText = TextView(this).apply {
             text = "Menyiapkan peta GPS..."
             textSize = 14f
-            setTextColor(Color.WHITE)
-            setPadding(16, 14, 16, 14)
+            setTextColor(t.text)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(40, 28, 40, 28)
         }
 
         mapView = WebView(this).apply {
@@ -102,6 +113,11 @@ class MapActivity : Activity() {
         val backButton = Button(this).apply {
             text = "KEMBALI"
             isAllCaps = false
+            setTextColor(onColor(t.accent))
+            background = GradientDrawable().apply {
+                setColor(t.accent); cornerRadius = 48f
+            }
+            stateListAnimator = null
             setOnClickListener { finish() }
         }
 
@@ -116,7 +132,13 @@ class MapActivity : Activity() {
             )
         )
 
-        root.addView(backButton)
+        root.addView(
+            backButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(40, 20, 40, 28) }
+        )
         setContentView(root)
 
         mapView.loadDataWithBaseURL(
@@ -232,7 +254,7 @@ class MapActivity : Activity() {
                 ).addTo(map);
 
                 const route = L.polyline([], {
-                  color: '#26be7d',
+                  color: '$accentHex',
                   weight: 5
                 }).addTo(map);
 
