@@ -1330,7 +1330,13 @@ class MainActivity : Activity() {
         statRow(r, statCard("Tanjakan", "${climbM.roundToInt()} m"),
             statCard("Jarak", Fmt.dec(km, 2) + " km"))
 
-        r.add(btn("⌂   KEMBALI KE BERANDA", a, 28) { showHome() }, 16, 0f, dp(54))
+        val shareNow = ShareData(
+            m, icon(m), SimpleDateFormat("d MMM yyyy HH:mm", Locale.forLanguageTag("id-ID")).format(Date()),
+            km, elapsed, averageSpeed(), maxSpeedKmh, calories(), climbM.roundToInt(),
+            TrackerState.steps(), TrackerState.avgPaceSec(), route.toList()
+        )
+        r.add(btn("⤴   BAGIKAN AKTIVITAS", a, 28) { ShareCard.share(this, t, a, shareNow) }, 16, 0f, dp(54))
+        r.add(btn("⌂   KEMBALI KE BERANDA", t.surface, 28) { showHome() }, 10, 0f, dp(50))
         r.add(btn("▤   LIHAT RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         show(0, r)
     }
@@ -1466,6 +1472,12 @@ class MainActivity : Activity() {
                 }
             }, 16, 0f, dp(54))
         }
+        r.add(btn("⤴   BAGIKAN AKTIVITAS", a, 28) {
+            ShareCard.share(this, t, a, ShareData(
+                rec.mode, icon(rec.mode), rec.date, rec.km, rec.elapsed, rec.avgF, rec.maxF,
+                rec.kcal.toIntOrNull() ?: 0, rec.climb.toIntOrNull() ?: 0, rec.steps, rec.paceSec, rec.route
+            ))
+        }, 10, 0f, dp(54))
         r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         r.add(btn("Hapus perjalanan ini", t.bad) {
             confirm("Hapus perjalanan ini?") {
