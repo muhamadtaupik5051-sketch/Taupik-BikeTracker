@@ -26,7 +26,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Satu baris riwayat. Format: tanggal|mode|km|durasiMs|rata2|maks|target|rute|kkal|tanjakan
+/** Satu baris riwayat. Format: tanggal|mode|km|durasiMs|rata2|maks|target|rute|kkal|tanjakan|bergerakMs|detikPerContoh|contoh
  *  target: km (Sepeda/Lari) atau langkah (Jalan; data lama Jalan memakai km). */
 internal class Rec(val f: List<String>) {
     val date get() = f[0]
@@ -38,13 +38,18 @@ internal class Rec(val f: List<String>) {
     val maxSpeed get() = f.getOrNull(5) ?: "0.0"
     val avgF get() = avg.toFloatOrNull() ?: 0f
     val maxF get() = maxSpeed.toFloatOrNull() ?: 0f
-    val steps get() = (km * 1000f * TrackerState.STEPS_PER_METER).roundToInt()
+    val steps: Int get() = (km * 1000f * TrackerState.STEPS_PER_METER).roundToInt()
     val paceSec: Int? get() = if (km > 0.05f && elapsed > 0L) ((elapsed / 1000f) / km).roundToInt() else null
     private val stepTarget get() = mode == "Jalan" && target >= 100f
     val reached get() = target > 0f && (if (stepTarget) steps >= target else km >= target)
     val targetText get() = if (stepTarget) Fmt.int(target.toInt()) + " langkah" else target.toInt().toString() + " km"
     val kcal get() = f.getOrNull(8) ?: "0"
     val climb get() = f.getOrNull(9) ?: "0"
+    val moving get() = f.getOrNull(10)?.toLongOrNull() ?: 0L
+    val sampleSec get() = f.getOrNull(11)?.toIntOrNull() ?: 0
+    val samples: List<Float> by lazy {
+        (f.getOrNull(12) ?: "").split(",").mapNotNull { it.toFloatOrNull() }
+    }
     val route: List<DoubleArray> by lazy {
         (f.getOrNull(7) ?: "").split(";").mapNotNull { s ->
             val p = s.split(",")
@@ -155,6 +160,7 @@ class MainActivity : Activity() {
             else -> {
                 splashDone = true
                 showHome()
+                checkSavedSession()
             }
         }
     }
@@ -268,6 +274,7 @@ class MainActivity : Activity() {
     }
 
     private fun show(tab: Int, body: LinearLayout) {
+        Themes.keepAwake(this, false)
         trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         currentTab = tab
         inDetail = false
@@ -454,6 +461,7 @@ class MainActivity : Activity() {
 
     /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
     private fun showHome() {
+        Themes.keepAwake(this, false)
         trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         currentTab = 0
         inDetail = false
@@ -805,6 +813,7 @@ class MainActivity : Activity() {
      */
     private fun showTracking() {
         resetTrackViews()
+        Themes.keepAwake(this, true)
         currentTab = -1
         inDetail = false
         val m = mode
@@ -1238,6 +1247,22 @@ class MainActivity : Activity() {
         return sb.toString()
     }
 
+    /** Contoh grafik dipadatkan maksimal 150 titik. Hasil: (teks, detik per titik). */
+    private fun encodeSamples(): Pair<String, Int> {
+        val src = TrackerState.speedSamples
+        var every = TrackerState.sampleSeconds()
+        if (src.isEmpty()) return Pair("", every)
+        var list: List<Float> = src.toList()
+        while (list.size > 150) {
+            val merged = ArrayList<Float>()
+            var i = 0
+            while (i + 1 < list.size) { merged.add((list[i] + list[i + 1]) / 2f); i += 2 }
+            list = merged
+            every *= 2
+        }
+        return Pair(list.joinToString(",") { String.format(Locale.US, "%.1f", it) }, every)
+    }
+
     private fun saveActivity(elapsed: Long) {
         val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
         val record = listOf(
@@ -1249,7 +1274,10 @@ class MainActivity : Activity() {
             TrackerState.target.toString(),
             encodeRoute(),
             calories().toString(),
-            climbM.roundToInt().toString()
+            climbM.roundToInt().toString(),
+            TrackerState.movingMs.toString(),
+            encodeSamples().second.toString(),
+            encodeSamples().first
         ).joinToString("|")
         val list = rawRecords()
         list.add(0, record)
@@ -1381,6 +1409,20 @@ class MainActivity : Activity() {
             points = rec.route; hint = "Rute tidak terekam"; accent = a
         }, 10, 0f, dp(150))
 
+        if (rec.samples.size >= 2) {
+            val gc = card(t.surface, 14, 16)
+            gc.addView(tv(if (rec.mode == "Lari") "Grafik Pace (menit/km)" else "Grafik Kecepatan", 14f, t.text, true))
+            val gv = ChartView(this, t, a)
+            if (rec.mode == "Lari") {
+                gv.yTitle = "min/km"
+                gv.label = { v -> if (v < 1.5f) "" else Fmt.pace((3600f / v).roundToInt()) }
+            }
+            gv.values = rec.samples
+            gv.minutes = rec.samples.size * (if (rec.sampleSec > 0) rec.sampleSec else 5) / 60f
+            gc.add(gv, 6, 0f, dp(200))
+            r.add(gc, 10)
+        }
+
         if (rec.target > 0f) {
             val tc = card(t.surface, 12, 16)
             tc.addView(tv(
@@ -1397,6 +1439,10 @@ class MainActivity : Activity() {
         statRow(r, statCard("Durasi", formatTime(rec.elapsed)), second, 10)
         statRow(r, statCard("Kecepatan maks.", Fmt.dec(rec.maxF, 1) + " km/jam", a),
             statCard("Kalori", "${rec.kcal} kkal"))
+        if (rec.moving > 0L) {
+            statRow(r, statCard("Waktu bergerak", formatTime(rec.moving)),
+                statCard("Waktu berhenti", formatTime((rec.elapsed - rec.moving).coerceAtLeast(0L))))
+        }
         statRow(r, statCard("Tanjakan", "${rec.climb} m"),
             if (rec.mode == "Jalan") statCard("Langkah", Fmt.int(rec.steps))
             else statCard("Titik rute", rec.route.size.toString()))
@@ -1472,8 +1518,8 @@ class MainActivity : Activity() {
                 { Themes.stepTarget(this, m, 1); showSettings() }, acc(m)), 8)
         }
         val on = Themes.keepOn(this)
-        r.add(btn("Layar tetap menyala: " + (if (on) "AKTIF" else "MATI"), t.surface) {
-            Themes.setKeepOn(this, !on); applyTheme(); showSettings()
+        r.add(btn("Layar menyala saat tracking: " + (if (on) "AKTIF" else "MATI"), t.surface) {
+            Themes.setKeepOn(this, !on); showSettings()
         }, 8, 0f, dp(52))
 
         r.add(tv("RideTrack Pro V3 • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
