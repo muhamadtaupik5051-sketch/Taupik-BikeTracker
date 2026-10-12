@@ -53,6 +53,12 @@ object Themes {
     fun index(c: Context) = p(c).getInt("theme", 0).coerceIn(0, all.size - 1)
     fun current(c: Context) = all[index(c)]
     fun save(c: Context, i: Int) = p(c).edit().putInt("theme", i).apply()
+    /** Layar menyala terus hanya saat layar tracking aktif dan pilihan di Atur menyala. */
+    fun keepAwake(a: Activity, tracking: Boolean) {
+        if (tracking && keepOn(a)) a.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else a.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
     fun keepOn(c: Context) = p(c).getBoolean("keep_on", true)
     fun setKeepOn(c: Context, v: Boolean) = p(c).edit().putBoolean("keep_on", v).apply()
 
@@ -84,7 +90,6 @@ object Themes {
             if (Build.VERSION.SDK_INT >= 26) f = f or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
         a.window.decorView.systemUiVisibility = f
-        if (keepOn(a)) a.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        else a.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        a.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 }
