@@ -332,13 +332,8 @@ class MapPanel(
             LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
         bar.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         planBar = bar
-        cross = View(context).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL; setColor(0x33FFB020); setStroke(dp(2), 0xFFFFB020.toInt())
-            }
-            visibility = View.GONE
-        }
-        addView(cross, LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        // No fixed center marker: users select route points directly on the map.
+        cross = null
         addView(bar, LayoutParams(-1, -2, Gravity.BOTTOM).apply {
             leftMargin = dp(8); rightMargin = dp(8); bottomMargin = dp(8)
         })
@@ -351,7 +346,7 @@ class MapPanel(
         }
         planOn = !planOn
         planBar?.visibility = if (planOn) View.VISIBLE else View.GONE
-        cross?.visibility = if (planOn) View.VISIBLE else View.GONE
+        cross?.visibility = View.GONE
         planBtn?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(if (planOn) 0xFFFFB020.toInt() else t.surface)
