@@ -97,6 +97,7 @@ class MapPanel(
 
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
+        MapHtml.applyCache(web)
         web.setBackgroundColor(t.surface)
         web.addJavascriptInterface(Bridge(), "Bridge")
         web.webViewClient = WebViewClient()
