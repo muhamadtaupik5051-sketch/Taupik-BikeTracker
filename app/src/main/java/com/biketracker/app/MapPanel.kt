@@ -48,6 +48,7 @@ class MapPanel(
     private var sent = 0
     private var pending: List<DoubleArray> = emptyList()
     private var planBtn: TextView? = null
+    private var cross: View? = null
     private var planBar: LinearLayout? = null
     private var planInfo: TextView? = null
     private var planRoadBtn: TextView? = null
@@ -89,6 +90,14 @@ class MapPanel(
                 status.visibility = View.VISIBLE
             }
         }
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (!compact && ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            val edge = 28f * d
+            parent?.requestDisallowInterceptTouchEvent(ev.x > edge && ev.x < width - edge)
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun dp(v: Int) = (v * d).toInt()
@@ -282,18 +291,27 @@ class MapPanel(
         bar.addView(head)
 
         val row = LinearLayout(context)
-        row.addView(pill("↶ Urungkan", t.bg, t.text) { if (ready) web.evaluateJavascript("undoWp()", null) },
+        row.addView(pill("＋ Titik", 0xFF19B5FF.toInt(), 0xFF04141F.toInt()) { if (ready) web.evaluateJavascript("addCenter()", null) },
             LinearLayout.LayoutParams(-2, dp(30)))
+        row.addView(pill("↶", t.bg, t.text) { if (ready) web.evaluateJavascript("undoWp()", null) },
+            LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
         row.addView(pill("Hapus", t.bg, t.text) { if (ready) web.evaluateJavascript("clearPlan()", null) },
             LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
         row.addView(pill("Simpan", 0xFFFFB020.toInt(), 0xFF111111.toInt()) { savePlanDialog() },
             LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
-        row.addView(pill("Google Maps ↗", t.bg, t.text) {
+        row.addView(pill("Maps ↗", t.bg, t.text) {
             if (planWps.size < 2) Toast.makeText(context, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
             else openDirections(planWps, profile)
         }, LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
         bar.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         planBar = bar
+        cross = View(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL; setColor(0x33FFB020); setStroke(dp(2), 0xFFFFB020.toInt())
+            }
+            visibility = View.GONE
+        }
+        addView(cross, LayoutParams(dp(26), dp(26), Gravity.CENTER))
         addView(bar, LayoutParams(-1, -2, Gravity.BOTTOM).apply {
             leftMargin = dp(8); rightMargin = dp(8); bottomMargin = dp(8)
         })
@@ -306,6 +324,7 @@ class MapPanel(
         }
         planOn = !planOn
         planBar?.visibility = if (planOn) View.VISIBLE else View.GONE
+        cross?.visibility = if (planOn) View.VISIBLE else View.GONE
         planBtn?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(if (planOn) 0xFFFFB020.toInt() else t.surface)
