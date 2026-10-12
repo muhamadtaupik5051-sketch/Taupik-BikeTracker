@@ -74,7 +74,8 @@ class MainActivity : Activity() {
     private var pendingResume = false
     private var splashDone = false
     private var homePage = 0
-    private var trackPage = 0
+    private var trackPage = 1
+    private var goTrackPage: (Int) -> Unit = {}
     private val modes = listOf("Sepeda", "Lari", "Jalan")
 
     // Status pelacakan disimpan di TrackerState supaya tetap hidup bersama TrackingService.
@@ -209,7 +210,7 @@ class MainActivity : Activity() {
             .setTitle("Aktivitas belum selesai")
             .setMessage("Ada perjalanan yang belum disimpan karena aplikasi sempat tertutup. Lanjutkan?")
             .setPositiveButton("Lanjutkan") { _, _ ->
-                if (TrackerState.restore(this)) { trackPage = 0; showTracking() } else TrackerState.clearSaved(this)
+                if (TrackerState.restore(this)) { trackPage = 1; showTracking() } else TrackerState.clearSaved(this)
             }
             .setNegativeButton("Buang") { _, _ -> TrackerState.clearSaved(this) }
             .setCancelable(false)
@@ -461,6 +462,7 @@ class MainActivity : Activity() {
 
     /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
     private fun showHome() {
+        if (running) { showTracking(); return }
         Themes.keepAwake(this, false)
         trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         currentTab = 0
@@ -607,13 +609,17 @@ class MainActivity : Activity() {
         }
         statRow(r, metrics.first, metrics.second, 10)
 
-        r.add(stepper("◎ Target hari ini", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
-            { Themes.stepTarget(this, m, -1); showHome() },
-            { Themes.stepTarget(this, m, 1); showHome() }, a), 10)
-
         if (running) {
-            r.add(btn("●   KEMBALI KE AKTIVITAS", a, 30) { showTracking() }, 10, 0f, dp(58))
+            val live = card(t.surface, 14, 18)
+            live.addView(tv("● AKTIVITAS SEDANG BERJALAN", 11f, a, true))
+            live.add(tv(if (paused) "Dijeda • tekan LANJUT di bawah untuk meneruskan"
+                else "Merekam • geser ke Utama, Rute, atau Grafik", 13f, t.text), 4)
+            r.add(live, 10)
+            r.add(btn("→   LIHAT AKTIVITAS", a, 30) { goTrackPage(1) }, 10, 0f, dp(54))
         } else {
+            r.add(stepper("◎ Target hari ini", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
+                { Themes.stepTarget(this, m, -1); showHome() },
+                { Themes.stepTarget(this, m, 1); showHome() }, a), 10)
             r.add(btn("▶   MULAI " + startLabel(m), a, 30) { startTracking(m) }, 10, 0f, dp(58))
         }
 
@@ -672,7 +678,7 @@ class MainActivity : Activity() {
     private fun startTracking(m: String = mode) {
         if (running) return
         mode = m
-        trackPage = 0
+        trackPage = 1
         if (!hasFine()) {
             pendingResume = false
             askPermissions()
@@ -849,10 +855,10 @@ class MainActivity : Activity() {
             v.paint.isUnderlineText = selected
         }
         val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf("Utama", "Rute", "Grafik").forEachIndexed { i, name ->
+        listOf("Beranda", "Utama", "Rute", "Grafik").forEachIndexed { i, name ->
             val v = tv(name, 14f, t.muted).apply {
                 gravity = Gravity.CENTER
-                setPadding(dp(16), dp(10), dp(16), dp(6))
+                setPadding(dp(12), dp(10), dp(12), dp(6))
                 setOnClickListener { pager.goTo(i, true) }
             }
             styleTab(v, i == trackPage)
@@ -871,7 +877,10 @@ class MainActivity : Activity() {
             "Jalan" -> buildWalkBody(main, a)
             else -> buildBikeBody(main, a)
         }
+        pager.pages = 4
+        goTrackPage = { p -> pager.goTo(p, true) }
         val strip = LinearLayout(this)
+        strip.addView(homePageView(m), LinearLayout.LayoutParams(w, -1))
         strip.addView(trackScroll(main), LinearLayout.LayoutParams(w, -1))
         strip.addView(trackScroll(buildRoutePage(a)), LinearLayout.LayoutParams(w, -1))
         strip.addView(trackScroll(buildChartPage(m, a)), LinearLayout.LayoutParams(w, -1))
@@ -896,7 +905,7 @@ class MainActivity : Activity() {
         outer.addView(header)
         outer.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
         outer.addView(row)
-        outer.addView(navBar(-1))
+        outer.addView(navBar(0))
         setContentView(outer)
         outer.requestApplyInsets()
         pager.post { pager.goTo(trackPage, false) }
