@@ -6,14 +6,16 @@ object MapHtml {
      * Tanpa internet, peta memakai cache bagian yang pernah dibuka (lewat jalur yang sudah dilihat).
      * Tidak mengunduh peta massal, sesuai aturan penggunaan tile OpenStreetMap.
      */
+    @Suppress("DEPRECATION")
     fun applyCache(web: android.webkit.WebView) {
-        val online = try {
-            val cm = web.context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
-                as android.net.ConnectivityManager
-            @Suppress("DEPRECATION")
-            cm.activeNetworkInfo?.isConnected == true
+        var online = true
+        try {
+            val svc = web.context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+            val cm = svc as android.net.ConnectivityManager
+            val info = cm.activeNetworkInfo
+            online = info != null && info.isConnected
         } catch (e: Exception) {
-            true
+            online = true
         }
         web.settings.cacheMode = if (online) android.webkit.WebSettings.LOAD_DEFAULT
         else android.webkit.WebSettings.LOAD_CACHE_ELSE_NETWORK
@@ -146,6 +148,17 @@ object MapHtml {
                   map.dragging.disable(); map.touchZoom.disable(); map.doubleClickZoom.disable();
                   map.scrollWheelZoom.disable(); map.boxZoom.disable(); map.keyboard.disable();
                 }
+
+                // Titik survei: penanda oranye yang bisa dipilih.
+                var marks = null;
+                function addMark(lat, lon, name) {
+                  if (!map) return;
+                  if (!marks) { marks = L.layerGroup().addTo(map); }
+                  L.circleMarker([lat, lon], { radius: 9, color: '#ffffff', weight: 3, fillColor: '#FF9F1C', fillOpacity: 1 })
+                    .bindTooltip(name, { permanent: false }).addTo(marks);
+                }
+                function clearMarks() { if (marks) { marks.clearLayers(); } }
+                function focusMark(lat, lon) { if (!map) return; follow = false; map.setView([lat, lon], 18); }
 
                 // Posisi saat ini (tanpa tracking).
                 function setPosition(lat, lon, first) {
