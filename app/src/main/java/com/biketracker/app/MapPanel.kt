@@ -70,6 +70,8 @@ class MapPanel(
                 if (survey) {
                     loadActivePlan()
                     loadSavedMarks()
+                } else if (!compact) {
+                    loadActivePlan()
                 }
             }
         }
@@ -202,6 +204,20 @@ class MapPanel(
         if (!survey) addView(legend, LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = dp(10); bottomMargin = dp(10)
         })
+
+        if (!survey && !compact) {
+            val gb = TextView(context).apply {
+                text = "🧭 Rute"; textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(0xFF111111.toInt()); gravity = Gravity.CENTER
+                setPadding(dp(12), 0, dp(12), 0)
+                background = round(0xFFFFB020.toInt(), 14)
+                elevation = 4f * d
+                setOnClickListener { guideDialog() }
+            }
+            addView(gb, LayoutParams(-2, dp(28), Gravity.TOP or Gravity.END).apply {
+                rightMargin = dp(10); topMargin = dp(10)
+            })
+        }
 
         status = TextView(context).apply {
             text = "Memuat peta…"
@@ -352,6 +368,31 @@ class MapPanel(
     private fun loadActivePlan() {
         val act = prefs().getString("active_plan", "") ?: ""
         loadPlans().firstOrNull { it[0] == act }?.let { loadPlanOnMap(it, false) }
+    }
+
+    /** Pilih rute rencana sebagai garis panduan saat bersepeda (tanpa mode edit). */
+    private fun guideDialog() {
+        val plans = loadPlans()
+        if (plans.isEmpty()) {
+            Toast.makeText(context, "Belum ada rute. Buat dulu di halaman Survei (✎) lalu Simpan.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val names = ArrayList<String>()
+        names.add("Tanpa panduan")
+        plans.forEach { names.add(it[1] + " · " + Fmt.dec((it[4].toDoubleOrNull() ?: 0.0) / 1000.0, 2) + " km") }
+        AlertDialog.Builder(context)
+            .setTitle("Ikuti rute")
+            .setItems(names.toTypedArray()) { _, i ->
+                if (i == 0) {
+                    prefs().edit().putString("active_plan", "").apply()
+                    if (ready) web.evaluateJavascript("loadPlan([],true,'bike',false)", null)
+                } else {
+                    prefs().edit().putString("active_plan", plans[i - 1][0]).apply()
+                    loadPlanOnMap(plans[i - 1], true)
+                }
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
     }
 
     private fun choosePlanDialog() {
