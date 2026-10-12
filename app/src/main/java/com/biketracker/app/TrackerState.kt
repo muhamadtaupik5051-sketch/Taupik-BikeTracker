@@ -32,6 +32,7 @@ object TrackerState {
     /** Contoh kecepatan (km/jam) tiap beberapa detik, untuk grafik di layar tracking. */
     val speedSamples = mutableListOf<Float>()
 
+    var movingMs = 0L
     private var sampleEveryMs = 5000L
     private var lastSampleAt = 0L
     private var splitStartElapsed = 0L
@@ -67,6 +68,7 @@ object TrackerState {
         smoothKmh = 0f
         splits.clear()
         splitStartElapsed = 0L
+        movingMs = 0L
         speedSamples.clear()
         sampleEveryMs = 5000L
         lastSampleAt = 0L
@@ -114,10 +116,15 @@ object TrackerState {
     fun currentElapsed(): Long =
         elapsedBeforeRun + if (running && !paused) System.currentTimeMillis() - runStartedAt else 0L
 
+    /** Rata-rata kecepatan memakai waktu bergerak (berhenti di lampu merah tidak dihitung). */
     fun averageSpeed(): Float {
-        val h = currentElapsed() / 3600000f
+        val ms = if (movingMs >= 15000L) minOf(movingMs, currentElapsed().coerceAtLeast(1L)) else currentElapsed()
+        val h = ms / 3600000f
         return if (h > 0f) (distanceMeters / 1000f) / h else 0f
     }
+
+    /** Detik per interval contoh grafik (untuk disimpan bersama riwayat). */
+    fun sampleSeconds(): Int = (sampleEveryMs / 1000L).toInt()
 
     fun calories(weightKg: Int): Int {
         val h = currentElapsed() / 3600000f
@@ -145,12 +152,17 @@ object TrackerState {
         gpsStatus = "GPS ±${location.accuracy.toInt()} m"
         if (!running || paused) return
 
+        // Diam di tempat: GPS tetap bergoyang beberapa meter, jangan dihitung sebagai jarak.
+        val still = location.hasSpeed() && location.speed < 0.5f
+
         val previous = lastLocation
-        if (previous != null && location.time > previous.time) {
+        if (previous != null && location.time > previous.time && !still) {
             val seconds = (location.time - previous.time) / 1000f
             val delta = previous.distanceTo(location)
-            if (seconds > 0f && delta in 0.5f..100f && delta / seconds * 3.6f <= speedLimit()) {
+            val minStep = maxOf(1.5f, location.accuracy * 0.5f)
+            if (seconds > 0f && delta >= minStep && delta / seconds * 3.6f <= speedLimit()) {
                 distanceMeters += delta
+                movingMs += (minOf(seconds, 5f) * 1000f).toLong()
             }
         }
         lastLocation = location
@@ -162,7 +174,7 @@ object TrackerState {
             splitStartElapsed = e
         }
 
-        val measured = if (location.hasSpeed()) location.speed * 3.6f else 0f
+        val measured = if (location.hasSpeed() && !still) location.speed * 3.6f else 0f
         speedKmh = if (measured in 0f..speedLimit()) measured else 0f
         smoothKmh = if (smoothKmh <= 0f) speedKmh else smoothKmh * 0.6f + speedKmh * 0.4f
         if (speedKmh > maxSpeedKmh) maxSpeedKmh = speedKmh
@@ -190,7 +202,7 @@ object TrackerState {
         if (last != null) {
             val res = FloatArray(1)
             Location.distanceBetween(last[0], last[1], location.latitude, location.longitude, res)
-            moved = res[0] >= 3f
+            moved = !still && res[0] >= maxOf(3f, location.accuracy)
         }
         if (moved && route.size < 5000) route.add(doubleArrayOf(location.latitude, location.longitude))
 
@@ -225,6 +237,9 @@ object TrackerState {
             .putInt("target", target)
             .putString("splits", splits.joinToString(","))
             .putLong("splitStart", splitStartElapsed)
+            .putLong("moving", movingMs)
+            .putLong("sampleEvery", sampleEveryMs)
+            .putString("samples", speedSamples.joinToString(",") { String.format(Locale.US, "%.1f", it) })
             .putFloat("dist", distanceMeters)
             .putFloat("max", maxSpeedKmh)
             .putLong("elapsed", currentElapsed())
@@ -261,6 +276,13 @@ object TrackerState {
             x.toIntOrNull()?.let { splits.add(it) }
         }
         splitStartElapsed = p.getLong("splitStart", elapsedBeforeRun)
+        movingMs = p.getLong("moving", 0L)
+        sampleEveryMs = p.getLong("sampleEvery", 5000L).coerceAtLeast(5000L)
+        speedSamples.clear()
+        for (x in (p.getString("samples", "") ?: "").split(",")) {
+            x.toFloatOrNull()?.let { speedSamples.add(it) }
+        }
+        lastSampleAt = elapsedBeforeRun
         smoothKmh = 0f
         runStartedAt = System.currentTimeMillis()
         lastLocation = null
