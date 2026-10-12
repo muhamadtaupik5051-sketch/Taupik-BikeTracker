@@ -819,9 +819,9 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(6), dp(12), dp(8))
             setBackgroundColor(t.bg)
         }
-        col.addView(tv("BUAT RUTE PERJALANAN", 16f, t.text, true),
+        col.addView(tv("SURVEI LOKASI & PEMBUAT RUTE", 16f, t.text, true),
             LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
-        col.addView(tv("Ketuk + Titik untuk menambah tujuan, Cari untuk mencari lokasi, lalu Simpan atau buka rute di Google Maps.", 11f, t.muted),
+        col.addView(tv("Buat rute di peta ini. Tab Beranda, Utama, Rute, dan Grafik tetap seperti semula.", 11f, t.muted),
             LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         val mp = MapPanel(this, t, a, false, true, if (mode == "Sepeda") "bike" else "foot")
         mp.minimumHeight = dp(360)
@@ -990,7 +990,7 @@ class MainActivity : Activity() {
             v.paint.isUnderlineText = selected
         }
         val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf("Beranda", "Utama", "Rute", "Grafik", "Buat Rute").forEachIndexed { i, name ->
+        listOf("Beranda", "Utama", "Rute", "Grafik", "Survei").forEachIndexed { i, name ->
             val v = tv(name, 13f, t.muted).apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(9), dp(10), dp(9), dp(6))
