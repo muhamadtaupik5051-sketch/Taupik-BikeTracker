@@ -1,4 +1,4 @@
-name: Build RideTrack Pro V3 APK
+name: Build RideTrack Pro V3.26 APK
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: RideTrack-Pro-V3-APK
+          name: RideTrack-Pro-V3.26-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
