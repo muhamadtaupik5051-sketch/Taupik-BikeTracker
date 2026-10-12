@@ -54,6 +54,8 @@ class MapPanel(
     private var planRoadBtn: TextView? = null
     private var planOn = false
     private var planRoad = true
+    private var planLoop = false
+    private var loopPill: TextView? = null
     private var planDist = 0.0
     private var planWps: List<DoubleArray> = emptyList()
     private var firstPos = true
@@ -80,6 +82,16 @@ class MapPanel(
         @JavascriptInterface
         fun onPlan(dist: Double, count: Int, snapped: Boolean, err: Boolean, json: String) {
             handler.post { onPlanChanged(dist, count, snapped, err, json) }
+        }
+
+        @JavascriptInterface
+        fun onLongPress(lat: Double, lon: Double) {
+            handler.post { longPressDialog(lat, lon) }
+        }
+
+        @JavascriptInterface
+        fun onMsg(m: String) {
+            handler.post { Toast.makeText(context, m, Toast.LENGTH_SHORT).show() }
         }
 
         @JavascriptInterface
@@ -273,9 +285,10 @@ class MapPanel(
             text = "Rencana rute"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
         })
         val info = TextView(context).apply {
-            text = " · 0,00 km · 0 titik · ketuk peta untuk menambah titik"
+            text = " · 0,00 km · tekan lama peta untuk menu titik"
             textSize = 12f; setTextColor(t.muted)
             maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setOnClickListener {
                 planRoad = !planRoad
                 if (ready) web.evaluateJavascript("setRoad($planRoad,'$profile')", null)
@@ -304,6 +317,20 @@ class MapPanel(
             else openDirections(planWps, profile)
         }, LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
         bar.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+
+        val row2 = LinearLayout(context)
+        val lp = pill("→ Sekali jalan", t.bg, t.text) {
+            planLoop = !planLoop
+            loopPill?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
+            if (ready) web.evaluateJavascript("setLoop($planLoop)", null)
+        }
+        loopPill = lp
+        row2.addView(lp, LinearLayout.LayoutParams(0, dp(30), 1.3f))
+        row2.addView(pill("☷ Titik", t.bg, t.text) { waypointListDialog() },
+            LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
+        row2.addView(pill("⌕ Cari", t.bg, t.text) { searchDialog() },
+            LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
+        bar.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         planBar = bar
         cross = View(context).apply {
             background = GradientDrawable().apply {
@@ -346,13 +373,16 @@ class MapPanel(
         }
         planWps = list
         val how = when {
-            count < 2 -> "ketuk peta untuk menambah titik"
+            count < 2 -> "tekan lama peta untuk menu titik"
             !planRoad -> "garis lurus (ketuk: ikuti jalan)"
             err -> "jalan tidak ditemukan"
             snapped -> "mengikuti jalan"
             else -> "menghitung jalan…"
         }
-        planInfo?.text = " · " + Fmt.dec(dist / 1000.0, 2) + " km · " + count + " titik · " + how
+        val kmh = if (profile == "bike") 16.0 else 5.0
+        val mnt = Math.round(dist / 1000.0 / kmh * 60.0).toInt()
+        val dur = if (mnt >= 60) (mnt / 60).toString() + " j " + (mnt % 60) + " mnt" else "$mnt mnt"
+        planInfo?.text = " · " + Fmt.dec(dist / 1000.0, 2) + " km · " + dur + " · " + count + " titik · " + how
     }
 
     private fun wpsText(w: List<DoubleArray>) = w.joinToString(";") { String.format(Locale.US, "%.6f,%.6f", it[0], it[1]) }
@@ -381,7 +411,9 @@ class MapPanel(
     private fun loadPlanOnMap(p: List<String>, fit: Boolean) {
         if (!ready) return
         planRoad = p[2] == "1"
-        web.evaluateJavascript("loadPlan(${wpsJson(parseWps(p[5]))},$planRoad,'${p[3]}',$fit)", null)
+        planLoop = p.getOrNull(6) == "1"
+        loopPill?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
+        web.evaluateJavascript("loadPlan(${wpsJson(parseWps(p[5]))},$planRoad,'${p[3]}',$fit,$planLoop)", null)
     }
 
     private fun loadActivePlan() {
@@ -411,6 +443,68 @@ class MapPanel(
                 }
             }
             .setNegativeButton("Tutup", null)
+            .show()
+    }
+
+    private fun longPressDialog(lat: Double, lon: Double) {
+        val la = String.format(Locale.US, "%.6f", lat)
+        val lo = String.format(Locale.US, "%.6f", lon)
+        val items = arrayOf("🟢 Mulai di sini (A)", "🔴 Jadikan titik akhir (B)", "＋ Tambah ke rute")
+        AlertDialog.Builder(context)
+            .setTitle("$la, $lo")
+            .setItems(items) { _, i ->
+                if (!ready) return@setItems
+                val fn = when (i) { 0 -> "startHere"; 1 -> "endHere"; else -> "addWp" }
+                web.evaluateJavascript("$fn($la,$lo)", null)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun waypointListDialog() {
+        if (planWps.isEmpty()) {
+            Toast.makeText(context, "Belum ada titik. Tekan lama di peta.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val n = planWps.size
+        val names = Array(n) { i ->
+            val tag = if (n > 1 && i == 0) "A" else if (n > 1 && i == n - 1) "B" else (i + 1).toString()
+            tag + "   " + String.format(Locale.US, "%.5f, %.5f", planWps[i][0], planWps[i][1])
+        }
+        AlertDialog.Builder(context)
+            .setTitle("Titik rute")
+            .setItems(names) { _, i ->
+                AlertDialog.Builder(context)
+                    .setTitle(names[i])
+                    .setItems(arrayOf("Lihat di peta", "Naik", "Turun", "Hapus titik")) { _, k ->
+                        if (!ready) return@setItems
+                        when (k) {
+                            0 -> web.evaluateJavascript(String.format(Locale.US, "focusMark(%.6f,%.6f)", planWps[i][0], planWps[i][1]), null)
+                            1 -> web.evaluateJavascript("moveWp($i,-1)", null)
+                            2 -> web.evaluateJavascript("moveWp($i,1)", null)
+                            else -> web.evaluateJavascript("removeWp($i)", null)
+                        }
+                    }
+                    .setNegativeButton("Tutup", null)
+                    .show()
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
+
+    private fun searchDialog() {
+        val et = android.widget.EditText(context).apply {
+            hint = "Nama tempat atau jalan"
+            setSingleLine()
+        }
+        AlertDialog.Builder(context)
+            .setTitle("Cari lokasi")
+            .setView(et)
+            .setPositiveButton("Cari") { _, _ ->
+                val q = et.text.toString().trim()
+                if (q.isNotEmpty() && ready) web.evaluateJavascript("searchPlace(" + org.json.JSONObject.quote(q) + ")", null)
+            }
+            .setNegativeButton("Batal", null)
             .show()
     }
 
@@ -448,7 +542,7 @@ class MapPanel(
                 val list = loadPlans()
                 list.add(0, listOf(
                     System.currentTimeMillis().toString(), name, if (planRoad) "1" else "0",
-                    profile, planDist.toInt().toString(), wpsText(planWps)
+                    profile, planDist.toInt().toString(), wpsText(planWps), if (planLoop) "1" else "0"
                 ))
                 prefs().edit().putString("plans", list.take(20).joinToString("\n") { it.joinToString("|") }).apply()
                 Toast.makeText(context, "Rencana \"$name\" disimpan", Toast.LENGTH_SHORT).show()
