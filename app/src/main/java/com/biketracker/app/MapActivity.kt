@@ -290,6 +290,7 @@ class MapActivity : Activity() {
         mapView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            MapHtml.applyCache(this)
             addJavascriptInterface(Bridge(), "Bridge")
             webViewClient = WebViewClient()
         }
@@ -326,7 +327,7 @@ class MapActivity : Activity() {
             }
             val legend = LinearLayout(this)
             legend.addView(legendChip(0xFF27D282.toInt(), "Start"))
-            legend.addView(legendChip(0xFFFF3B3B.toInt(), "Finish"),
+            legend.addView(legendChip(0xFFFF3B3B.toInt(), "Stop"),
                 LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
             legend.addView(legendChip(accentColor, "Garis rute"),
                 LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
