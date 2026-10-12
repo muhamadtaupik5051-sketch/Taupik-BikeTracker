@@ -23,6 +23,8 @@ object TrackerState {
     var maxSpeedKmh = 0f
     var elapsedBeforeRun = 0L
     var runStartedAt = 0L
+    /** Fix GPS terakhir yang akurat (dipakai halaman Survei). */
+    var lastFix: Location? = null
     var climbM = 0f
     var gpsStatus = "Mencari GPS…"
     val route = mutableListOf<DoubleArray>()
@@ -62,6 +64,26 @@ object TrackerState {
 
     /** Panjang sumbu waktu grafik, dalam menit. */
     fun chartMinutes(): Float = speedSamples.size * sampleEveryMs / 60000f
+
+    /** Mengosongkan angka tampilan saat belum merekam (setelah aktivitas selesai atau dibuang). */
+    fun clearDisplay() {
+        if (running) return
+        distanceMeters = 0f
+        speedKmh = 0f
+        maxSpeedKmh = 0f
+        elapsedBeforeRun = 0L
+        climbM = 0f
+        movingMs = 0L
+        smoothKmh = 0f
+        splits.clear()
+        speedSamples.clear()
+        route.clear()
+        splitStartElapsed = 0L
+        lastSampleAt = 0L
+        sampleEveryMs = 5000L
+        lastLocation = null
+        refAlt = Double.NaN
+    }
 
     fun start(targetValue: Int) {
         target = targetValue
@@ -150,6 +172,7 @@ object TrackerState {
             return
         }
         gpsStatus = "GPS ±${location.accuracy.toInt()} m"
+        lastFix = location
         if (!running || paused) return
 
         // Diam di tempat: GPS tetap bergoyang beberapa meter, jangan dihitung sebagai jarak.
