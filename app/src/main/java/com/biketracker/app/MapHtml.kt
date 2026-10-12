@@ -219,9 +219,10 @@ object MapHtml {
                   for (var i = 0; i < plan.mk.length; i++) { map.removeLayer(plan.mk[i]); }
                   plan.mk = [];
                   plan.wps.forEach(function (p, i) {
+                    // Penanda rute tanpa huruf/angka (A, B, 1, 2, 3); titik tetap bisa digeser saat mode edit.
                     var m = L.marker(p, {
                       draggable: plan.on,
-                      icon: L.divIcon({ className: '', html: '<div class="wp" style="' + (plan.wps.length > 1 && i === 0 ? 'background:#27D282;' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'background:#FF3B3B;color:#fff;' : '')) + '">' + (plan.wps.length > 1 && i === 0 ? 'A' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'B' : (i + 1))) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
+                      icon: L.divIcon({ className: '', html: '<div style="width:12px;height:12px;border-radius:50%;background:#43C5FF;border:3px solid #fff;box-shadow:0 1px 5px #0008;"></div>', iconSize: [18, 18], iconAnchor: [9, 9] })
                     }).addTo(map);
                     m.on('dragend', function (ev) { var q = ev.target.getLatLng(); plan.wps[i] = [q.lat, q.lng]; recompute(); });
                     plan.mk.push(m);
