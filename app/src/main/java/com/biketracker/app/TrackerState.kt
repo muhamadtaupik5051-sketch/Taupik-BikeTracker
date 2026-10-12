@@ -167,7 +167,9 @@ object TrackerState {
     }
 
     fun onLocation(location: Location) {
-        if (location.accuracy > 25f) {
+        // Toleransi 35 m membantu GPS tetap berguna di kondisi sinyal sedang.
+        // Filter jarak dan batas kecepatan di bawah tetap mencegah lompatan besar.
+        if (location.accuracy > 35f) {
             gpsStatus = "Mencari GPS…"
             return
         }
