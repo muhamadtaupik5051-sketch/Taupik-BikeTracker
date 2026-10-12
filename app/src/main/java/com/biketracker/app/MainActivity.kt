@@ -812,102 +812,21 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Halaman "Survei": speedometer kecil, ringkasan, dan peta untuk mengatur titik yang akan dilewati. */
+    /** Halaman "Buat Rute": peta interaktif untuk menyusun rute sebelum bersepeda. */
     private fun buildSurveyPage(a: Int): LinearLayout {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(4), dp(16), dp(8))
+            setPadding(dp(12), dp(6), dp(12), dp(8))
+            setBackgroundColor(t.bg)
         }
-        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val g = GaugeView(this, t).apply {
-            scaleMax = scaleFor(mode)
-            accent = a
-            scale = 1f
-            digital = true
-        }
-        surveyGauge = g
-        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
-
-        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val head = LinearLayout(this)
-        head.addView(tv("Target " + mode.lowercase(), 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
-        val pct = tv("0%", 11f, t.good, true)
-        surveyPct = pct
-        head.addView(pct)
-        right.addView(head)
-        val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
-        val tval = mono(tv("0,00", 20f, a, true))
-        surveyTarget = tval
-        vrow.addView(tval)
-        vrow.addView(tv("  / " + Themes.targetLabel(mode, TrackerState.target) +
-            (if (mode == "Jalan") " langkah" else ""), 11f, t.muted))
-        right.add(vrow, 2)
-        val bar = SegBar(this, t).apply { color = a }
-        surveyBar = bar
-        right.add(bar, 6, 0f, dp(8))
-        val maxC = miniStat("Maks. km/jam", "0,0", a)
-        val avgC = miniStat("Rata-rata", "0,0", t.good)
-        surveyMax = maxC.second
-        surveyAvg = avgC.second
-        val r2 = LinearLayout(this)
-        r2.addView(maxC.first, LinearLayout.LayoutParams(0, -2, 1f))
-        r2.addView(avgC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
-        right.add(r2, 8)
-        top.addView(right, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        col.addView(top)
-
-        val disC = miniStat("Jarak", "0,00 km")
-        val timC = miniStat("Durasi", "00:00:00")
-        val clmC = miniStat("Tanjakan", "0 m")
-        val kalC = miniStat("Kalori", "0 kkal")
-        surveyDist = disC.second; surveyTime = timC.second; surveyClimb = clmC.second; surveyKcal = kalC.second
-        val row = LinearLayout(this)
-        listOf(disC, timC, clmC, kalC).forEachIndexed { i, c ->
-            row.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(5) })
-        }
-        col.add(row, 6)
-
-        val locRow = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(6), dp(6), dp(6))
-            background = box(t.surface, 12)
-        }
-        val lc = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setOnClickListener {
-                val l = TrackerState.lastFix
-                if (l != null) {
-                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("koordinat",
-                        String.format(Locale.US, "%.6f, %.6f", l.latitude, l.longitude)))
-                    Toast.makeText(this@MainActivity, "Koordinat disalin", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-        val coordV = mono(tv("Menunggu sinyal GPS…", 12f, a, true))
-        surveyCoord = coordV
-        val subV = tv("", 10f, t.muted)
-        surveySub = subV
-        lc.addView(coordV)
-        lc.addView(subV)
-        locRow.addView(lc, LinearLayout.LayoutParams(0, -2, 1f))
-        locRow.addView(tv("⚑ Tandai", 11f, onColor(a), true).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(10), 0, dp(10), 0)
-            background = box(a, 15)
-            setOnClickListener { markHere() }
-        }, LinearLayout.LayoutParams(-2, dp(30)))
-        locRow.addView(tv("☰", 16f, t.text, true).apply {
-            gravity = Gravity.CENTER
-            setOnClickListener { showSurveyPoints() }
-        }, LinearLayout.LayoutParams(dp(36), dp(30)))
-        col.add(locRow, 6)
-        updateSurveyInfo()
-
+        col.addView(tv("BUAT RUTE PERJALANAN", 16f, t.text, true),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
+        col.addView(tv("Ketuk + Titik untuk menambah tujuan, Cari untuk mencari lokasi, lalu Simpan atau buka rute di Google Maps.", 11f, t.muted),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         val mp = MapPanel(this, t, a, false, true, if (mode == "Sepeda") "bike" else "foot")
-        mp.minimumHeight = dp(260)
+        mp.minimumHeight = dp(360)
         surveyMap = mp
-        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
+        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f))
         return col
     }
 
@@ -1071,7 +990,7 @@ class MainActivity : Activity() {
             v.paint.isUnderlineText = selected
         }
         val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf("Beranda", "Utama", "Rute", "Grafik", "Survei").forEachIndexed { i, name ->
+        listOf("Beranda", "Utama", "Rute", "Grafik", "Buat Rute").forEachIndexed { i, name ->
             val v = tv(name, 13f, t.muted).apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(9), dp(10), dp(9), dp(6))
@@ -1139,6 +1058,7 @@ class MainActivity : Activity() {
     private fun buildBikeBody(r: LinearLayout, a: Int) {
         val g = GaugeView(this, t).apply {
             scaleMax = scaleFor("Sepeda")
+            scale = 0.82f // Speedometer sepeda dibuat lebih besar agar mudah dibaca sambil berkendara.
             digital = digitalMode
             accent = a
             setOnClickListener { digitalMode = !digitalMode; digital = digitalMode; invalidate() }
