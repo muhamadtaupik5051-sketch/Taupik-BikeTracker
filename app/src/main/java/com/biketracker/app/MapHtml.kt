@@ -33,6 +33,9 @@ object MapHtml {
                        border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); }
                 .pin.g { background: #27D282; }
                 .pin.r { background: #FF3B3B; }
+                .wp { width: 26px; height: 26px; border-radius: 50%; background: #FFB020; color: #111;
+                      font: 700 13px sans-serif; display: flex; align-items: center; justify-content: center;
+                      border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); box-sizing: border-box; }
               </style>
             </head>
             <body>
@@ -67,6 +70,7 @@ object MapHtml {
                   });
                   map.on('dragstart', function () { follow = false; });
                   route = L.polyline([], { color: ACCENT, weight: 5 }).addTo(map);
+                  planInit();
                   Bridge.onReady();
                 }
 
@@ -147,6 +151,77 @@ object MapHtml {
                   if (!map) return;
                   map.dragging.disable(); map.touchZoom.disable(); map.doubleClickZoom.disable();
                   map.scrollWheelZoom.disable(); map.boxZoom.disable(); map.keyboard.disable();
+                }
+
+                // ---- Rencana rute manual: ketuk peta untuk menambah titik yang akan dilewati ----
+                var plan = { on: false, road: true, profile: 'bike', wps: [], mk: [], line: null, dist: 0 };
+                var reqId = 0;
+
+                function planInit() {
+                  plan.line = L.polyline([], { color: '#FFB020', weight: 5, dashArray: '10 8' }).addTo(map);
+                  map.on('click', function (e) { if (plan.on) { addWp(e.latlng.lat, e.latlng.lng); } });
+                }
+
+                function setPlan(on) { plan.on = on; renderWps(); }
+
+                function setRoad(on, profile) { plan.road = on; plan.profile = profile; recompute(); }
+
+                function addWp(lat, lon) { plan.wps.push([lat, lon]); renderWps(); recompute(); }
+
+                function addCenter() { var c = map.getCenter(); addWp(c.lat, c.lng); }
+
+                function undoWp() { plan.wps.pop(); renderWps(); recompute(); }
+
+                function clearPlan() { plan.wps = []; renderWps(); recompute(); }
+
+                function loadPlan(arr, road, profile, fit) {
+                  plan.wps = arr; plan.road = road; plan.profile = profile;
+                  renderWps(); recompute();
+                  if (fit && arr.length > 1) { map.fitBounds(L.latLngBounds(arr), { padding: [50, 50] }); }
+                  else if (fit && arr.length === 1) { map.setView(arr[0], 16); }
+                }
+
+                function renderWps() {
+                  for (var i = 0; i < plan.mk.length; i++) { map.removeLayer(plan.mk[i]); }
+                  plan.mk = [];
+                  plan.wps.forEach(function (p, i) {
+                    var m = L.marker(p, {
+                      draggable: plan.on,
+                      icon: L.divIcon({ className: '', html: '<div class="wp">' + (i + 1) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
+                    }).addTo(map);
+                    m.on('dragend', function (ev) { var q = ev.target.getLatLng(); plan.wps[i] = [q.lat, q.lng]; recompute(); });
+                    plan.mk.push(m);
+                  });
+                }
+
+                function straightDist(a) {
+                  var d = 0;
+                  for (var i = 1; i < a.length; i++) { d += map.distance(a[i - 1], a[i]); }
+                  return d;
+                }
+
+                function report(snapped, err) {
+                  Bridge.onPlan(plan.dist, plan.wps.length, snapped, err, JSON.stringify(plan.wps));
+                }
+
+                function recompute() {
+                  var id = ++reqId;
+                  plan.line.setLatLngs(plan.wps.slice());
+                  plan.dist = straightDist(plan.wps);
+                  report(false, false);
+                  if (!plan.road || plan.wps.length < 2) { return; }
+                  var coords = plan.wps.map(function (p) { return p[1] + ',' + p[0]; }).join(';');
+                  var prof = plan.profile === 'foot' ? 'routed-foot' : 'routed-bike';
+                  var url = 'https://routing.openstreetmap.de/' + prof + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
+                  fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+                    if (id !== reqId) { return; }
+                    if (j.routes && j.routes[0]) {
+                      var c = j.routes[0].geometry.coordinates.map(function (q) { return [q[1], q[0]]; });
+                      plan.line.setLatLngs(c);
+                      plan.dist = j.routes[0].distance;
+                      report(true, false);
+                    } else { report(false, true); }
+                  }).catch(function () { if (id === reqId) { report(false, true); } });
                 }
 
                 // Titik survei: penanda oranye yang bisa dipilih.
