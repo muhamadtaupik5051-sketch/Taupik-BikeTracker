@@ -154,12 +154,17 @@ object MapHtml {
                 }
 
                 // ---- Rencana rute manual: ketuk peta untuk menambah titik yang akan dilewati ----
-                var plan = { on: false, road: true, profile: 'bike', wps: [], mk: [], line: null, dist: 0 };
+                var plan = { on: false, road: true, loop: false, profile: 'bike', wps: [], mk: [], line: null, dist: 0 };
                 var reqId = 0;
 
                 function planInit() {
                   plan.line = L.polyline([], { color: '#FFB020', weight: 5, dashArray: '10 8' }).addTo(map);
                   map.on('click', function (e) { if (plan.on) { addWp(e.latlng.lat, e.latlng.lng); } });
+                  map.on('contextmenu', function (e) {
+                    if (!plan.on) { return; }
+                    if (e.originalEvent && e.originalEvent.preventDefault) { e.originalEvent.preventDefault(); }
+                    Bridge.onLongPress(e.latlng.lat, e.latlng.lng);
+                  });
                 }
 
                 function setPlan(on) { plan.on = on; renderWps(); }
@@ -170,12 +175,41 @@ object MapHtml {
 
                 function addCenter() { var c = map.getCenter(); addWp(c.lat, c.lng); }
 
+                function startHere(lat, lon) {
+                  if (plan.wps.length === 0) { plan.wps.push([lat, lon]); } else { plan.wps[0] = [lat, lon]; }
+                  renderWps(); recompute();
+                }
+
+                function endHere(lat, lon) {
+                  if (plan.wps.length < 2) { plan.wps.push([lat, lon]); } else { plan.wps[plan.wps.length - 1] = [lat, lon]; }
+                  renderWps(); recompute();
+                }
+
+                function removeWp(i) { plan.wps.splice(i, 1); renderWps(); recompute(); }
+
+                function moveWp(i, dir) {
+                  var j = i + dir;
+                  if (j < 0 || j >= plan.wps.length) { return; }
+                  var t = plan.wps[i]; plan.wps[i] = plan.wps[j]; plan.wps[j] = t;
+                  renderWps(); recompute();
+                }
+
+                function setLoop(on) { plan.loop = on; recompute(); }
+
+                function searchPlace(q) {
+                  fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q))
+                    .then(function (r) { return r.json(); }).then(function (j) {
+                      if (j && j[0]) { follow = false; map.setView([parseFloat(j[0].lat), parseFloat(j[0].lon)], 16); Bridge.onMsg('Ditemukan: ' + j[0].display_name.split(',')[0]); }
+                      else { Bridge.onMsg('Lokasi tidak ditemukan'); }
+                    }).catch(function () { Bridge.onMsg('Pencarian butuh internet'); });
+                }
+
                 function undoWp() { plan.wps.pop(); renderWps(); recompute(); }
 
                 function clearPlan() { plan.wps = []; renderWps(); recompute(); }
 
-                function loadPlan(arr, road, profile, fit) {
-                  plan.wps = arr; plan.road = road; plan.profile = profile;
+                function loadPlan(arr, road, profile, fit, loop) {
+                  plan.wps = arr; plan.road = road; plan.profile = profile; plan.loop = !!loop;
                   renderWps(); recompute();
                   if (fit && arr.length > 1) { map.fitBounds(L.latLngBounds(arr), { padding: [50, 50] }); }
                   else if (fit && arr.length === 1) { map.setView(arr[0], 16); }
@@ -187,7 +221,7 @@ object MapHtml {
                   plan.wps.forEach(function (p, i) {
                     var m = L.marker(p, {
                       draggable: plan.on,
-                      icon: L.divIcon({ className: '', html: '<div class="wp">' + (i + 1) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
+                      icon: L.divIcon({ className: '', html: '<div class="wp" style="' + (plan.wps.length > 1 && i === 0 ? 'background:#27D282;' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'background:#FF3B3B;color:#fff;' : '')) + '">' + (plan.wps.length > 1 && i === 0 ? 'A' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'B' : (i + 1))) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
                     }).addTo(map);
                     m.on('dragend', function (ev) { var q = ev.target.getLatLng(); plan.wps[i] = [q.lat, q.lng]; recompute(); });
                     plan.mk.push(m);
@@ -206,11 +240,13 @@ object MapHtml {
 
                 function recompute() {
                   var id = ++reqId;
-                  plan.line.setLatLngs(plan.wps.slice());
-                  plan.dist = straightDist(plan.wps);
+                  var pts = plan.wps.slice();
+                  if (plan.loop && pts.length >= 2) { pts.push(pts[0]); }
+                  plan.line.setLatLngs(pts);
+                  plan.dist = straightDist(pts);
                   report(false, false);
-                  if (!plan.road || plan.wps.length < 2) { return; }
-                  var coords = plan.wps.map(function (p) { return p[1] + ',' + p[0]; }).join(';');
+                  if (!plan.road || pts.length < 2) { return; }
+                  var coords = pts.map(function (p) { return p[1] + ',' + p[0]; }).join(';');
                   var prof = plan.profile === 'foot' ? 'routed-foot' : 'routed-bike';
                   var url = 'https://routing.openstreetmap.de/' + prof + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
                   fetch(url).then(function (r) { return r.json(); }).then(function (j) {
