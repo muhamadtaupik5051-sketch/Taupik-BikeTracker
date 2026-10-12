@@ -2,6 +2,23 @@ package com.biketracker.app
 
 /** Halaman HTML Leaflet yang dipakai MapActivity dan panel peta di layar tracking. */
 object MapHtml {
+    /**
+     * Tanpa internet, peta memakai cache bagian yang pernah dibuka (lewat jalur yang sudah dilihat).
+     * Tidak mengunduh peta massal, sesuai aturan penggunaan tile OpenStreetMap.
+     */
+    fun applyCache(web: android.webkit.WebView) {
+        val online = try {
+            val cm = web.context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                as android.net.ConnectivityManager
+            @Suppress("DEPRECATION")
+            cm.activeNetworkInfo?.isConnected == true
+        } catch (e: Exception) {
+            true
+        }
+        web.settings.cacheMode = if (online) android.webkit.WebSettings.LOAD_DEFAULT
+        else android.webkit.WebSettings.LOAD_CACHE_ELSE_NETWORK
+    }
+
     fun build(accentHex: String): String {
         return """
             <!DOCTYPE html>
