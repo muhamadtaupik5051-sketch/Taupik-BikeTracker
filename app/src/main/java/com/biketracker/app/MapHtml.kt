@@ -236,6 +236,14 @@ object MapHtml {
 
                 function report(snapped, err) {
                   Bridge.onPlan(plan.dist, plan.wps.length, snapped, err, JSON.stringify(plan.wps));
+                  try {
+                    var g = plan.line.getLatLngs();
+                    var st = Math.max(1, Math.ceil(g.length / 400));
+                    var o = [];
+                    for (var i = 0; i < g.length; i += st) { o.push(g[i].lat.toFixed(5) + ',' + g[i].lng.toFixed(5)); }
+                    if (g.length > 0 && (g.length - 1) % st !== 0) { var z = g[g.length - 1]; o.push(z.lat.toFixed(5) + ',' + z.lng.toFixed(5)); }
+                    if (Bridge.onGeo) { Bridge.onGeo(o.join(';')); }
+                  } catch (e) { }
                 }
 
                 function recompute() {
