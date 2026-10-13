@@ -48,7 +48,6 @@ class MapPanel(
     private var sent = 0
     private var pending: List<DoubleArray> = emptyList()
     private var planBtn: TextView? = null
-    private var cross: View? = null
     private var planBar: LinearLayout? = null
     private var planInfo: TextView? = null
     private var planRoadBtn: TextView? = null
@@ -285,7 +284,7 @@ class MapPanel(
             text = "Rencana rute"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
         })
         val info = TextView(context).apply {
-            text = " · 0,00 km · tekan lama peta untuk menu titik"
+            text = " · 0,00 km · ketuk peta untuk menambah titik"
             textSize = 12f; setTextColor(t.muted)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -304,10 +303,8 @@ class MapPanel(
         bar.addView(head)
 
         val row = LinearLayout(context)
-        row.addView(pill("＋ Titik", 0xFF19B5FF.toInt(), 0xFF04141F.toInt()) { if (ready) web.evaluateJavascript("addCenter()", null) },
+        row.addView(pill("↶ Urungkan", t.bg, t.text) { if (ready) web.evaluateJavascript("undoWp()", null) },
             LinearLayout.LayoutParams(-2, dp(30)))
-        row.addView(pill("↶", t.bg, t.text) { if (ready) web.evaluateJavascript("undoWp()", null) },
-            LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
         row.addView(pill("Hapus", t.bg, t.text) { if (ready) web.evaluateJavascript("clearPlan()", null) },
             LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
         row.addView(pill("Simpan", 0xFFFFB020.toInt(), 0xFF111111.toInt()) { savePlanDialog() },
@@ -332,8 +329,6 @@ class MapPanel(
             LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
         bar.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         planBar = bar
-        // No fixed center marker: users select route points directly on the map.
-        cross = null
         addView(bar, LayoutParams(-1, -2, Gravity.BOTTOM).apply {
             leftMargin = dp(8); rightMargin = dp(8); bottomMargin = dp(8)
         })
@@ -346,7 +341,6 @@ class MapPanel(
         }
         planOn = !planOn
         planBar?.visibility = if (planOn) View.VISIBLE else View.GONE
-        cross?.visibility = View.GONE
         planBtn?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(if (planOn) 0xFFFFB020.toInt() else t.surface)
@@ -368,7 +362,7 @@ class MapPanel(
         }
         planWps = list
         val how = when {
-            count < 2 -> "tekan lama peta untuk menu titik"
+            count < 2 -> "ketuk peta untuk menambah titik"
             !planRoad -> "garis lurus (ketuk: ikuti jalan)"
             err -> "jalan tidak ditemukan"
             snapped -> "mengikuti jalan"
