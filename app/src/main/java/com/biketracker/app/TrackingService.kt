@@ -37,6 +37,12 @@ class TrackingService : Service() {
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             TrackerState.onLocation(location)
+            val ev = TrackerState.routeEvent
+            if (ev != 0) {
+                TrackerState.routeEvent = 0
+                buzz(if (ev == 1) longArrayOf(0, 500, 200, 500, 200, 500) else longArrayOf(0, 200))
+                notifyUpdate()
+            }
         }
 
         override fun onProviderEnabled(provider: String) {
@@ -71,6 +77,7 @@ class TrackingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START, ACTION_RESUME -> {
+                TrackerState.loadGuide(this)
                 goForeground()
                 startListening()
                 handler.removeCallbacks(ticker)
@@ -87,8 +94,40 @@ class TrackingService : Service() {
         return START_NOT_STICKY
     }
 
+    @Suppress("DEPRECATION")
+    private fun buzz(pattern: LongArray) {
+        try {
+            val v = getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
+            if (Build.VERSION.SDK_INT >= 26) {
+                v.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
+            } else {
+                v.vibrate(pattern, -1)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    private var wake: android.os.PowerManager.WakeLock? = null
+
+    /** Jaga CPU tetap hidup selama merekam supaya GPS tidak terputus saat layar mati. */
+    private fun holdWake(on: Boolean) {
+        try {
+            if (on) {
+                if (wake == null) {
+                    val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+                    wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "ridetrack:gps")
+                }
+                if (wake?.isHeld != true) wake?.acquire(12 * 60 * 60 * 1000L)
+            } else if (wake?.isHeld == true) {
+                wake?.release()
+            }
+        } catch (e: Exception) {
+        }
+    }
+
     private fun startListening() {
         if (listening) return
+        holdWake(true)
         try {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, listener)
             listening = true
@@ -106,6 +145,7 @@ class TrackingService : Service() {
         } catch (e: Exception) {
         }
         listening = false
+        holdWake(false)
     }
 
     @Suppress("DEPRECATION")
@@ -154,7 +194,7 @@ class TrackingService : Service() {
             "Jalan" -> Fmt.int(TrackerState.steps()) + " langkah • " + Fmt.dec(km, 2) + " km • " + time
             else -> Fmt.dec(km, 2) + " km • " + time
         }
-        val body = main + (if (TrackerState.paused) " • dijeda" else "")
+        val body = (if (TrackerState.offRoute) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else "")
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else Notification.Builder(this)
         return b.setSmallIcon(android.R.drawable.ic_menu_mylocation)
