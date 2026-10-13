@@ -136,6 +136,10 @@ class MainActivity : Activity() {
     private var routeAvgText: TextView? = null
     private var routeMaxText: TextView? = null
     private var routeKcalText: TextView? = null
+    private var routeClimbText: TextView? = null
+    private var routeTarget: TextView? = null
+    private var routePct: TextView? = null
+    private var routeBar: SegBar? = null
     private var chart: ChartView? = null
     private var chartAvgText: TextView? = null
     private var chartMaxText: TextView? = null
@@ -318,7 +322,7 @@ class MainActivity : Activity() {
             background = box(t.surface, 0)
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
-        listOf("⌂" to "Beranda", "⌖" to "Peta", "▤" to "Riwayat", "⚙" to "Atur")
+        listOf("⌂" to "Beranda", "⌖" to "Routes", "▤" to "Riwayat", "⚙" to "Atur")
             .forEachIndexed { i, (ic, label) ->
                 val c = if (i == sel) t.accent else t.muted
                 val cell = LinearLayout(this).apply {
@@ -480,7 +484,7 @@ class MainActivity : Activity() {
     }
 
     /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
-    /** Beranda, Utama, Rute, Grafik, dan Survei kini satu layar yang digeser, baik sedang merekam maupun tidak. */
+    /** Beranda, Utama, Rute, dan Grafik kini satu layar yang digeser, baik sedang merekam maupun tidak. */
     private fun showHome() {
         showTracking()
     }
@@ -690,6 +694,7 @@ class MainActivity : Activity() {
         surveyCoord = null; surveySub = null
         chartDistText = null; chartTimeText = null; chartKcalText = null; routeDistText = null; routeTimeText = null
         routeGauge = null; routeAvgText = null; routeMaxText = null; routeKcalText = null
+        routeClimbText = null; routeTarget = null; routePct = null; routeBar = null
         chart = null; chartAvgText = null; chartMaxText = null
     }
 
@@ -812,21 +817,102 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Halaman "Buat Rute": peta interaktif untuk menyusun rute sebelum bersepeda. */
+    /** Halaman "Survei": speedometer kecil, ringkasan, dan peta untuk mengatur titik yang akan dilewati. */
     private fun buildSurveyPage(a: Int): LinearLayout {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(6), dp(12), dp(8))
-            setBackgroundColor(t.bg)
+            setPadding(dp(16), dp(4), dp(16), dp(8))
         }
-        col.addView(tv("SURVEI LOKASI & PEMBUAT RUTE", 16f, t.text, true),
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
-        col.addView(tv("Buat rute di peta ini. Tab Beranda, Utama, Rute, dan Grafik tetap seperti semula.", 11f, t.muted),
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val g = GaugeView(this, t).apply {
+            scaleMax = scaleFor(mode)
+            accent = a
+            scale = 1f
+            digital = true
+        }
+        surveyGauge = g
+        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
+
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val head = LinearLayout(this)
+        head.addView(tv("Target " + mode.lowercase(), 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 11f, t.good, true)
+        surveyPct = pct
+        head.addView(pct)
+        right.addView(head)
+        val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        val tval = mono(tv("0,00", 20f, a, true))
+        surveyTarget = tval
+        vrow.addView(tval)
+        vrow.addView(tv("  / " + Themes.targetLabel(mode, TrackerState.target) +
+            (if (mode == "Jalan") " langkah" else ""), 11f, t.muted))
+        right.add(vrow, 2)
+        val bar = SegBar(this, t).apply { color = a }
+        surveyBar = bar
+        right.add(bar, 6, 0f, dp(8))
+        val maxC = miniStat("Maks. km/jam", "0,0", a)
+        val avgC = miniStat("Rata-rata", "0,0", t.good)
+        surveyMax = maxC.second
+        surveyAvg = avgC.second
+        val r2 = LinearLayout(this)
+        r2.addView(maxC.first, LinearLayout.LayoutParams(0, -2, 1f))
+        r2.addView(avgC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
+        right.add(r2, 8)
+        top.addView(right, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        col.addView(top)
+
+        val disC = miniStat("Jarak", "0,00 km")
+        val timC = miniStat("Durasi", "00:00:00")
+        val clmC = miniStat("Tanjakan", "0 m")
+        val kalC = miniStat("Kalori", "0 kkal")
+        surveyDist = disC.second; surveyTime = timC.second; surveyClimb = clmC.second; surveyKcal = kalC.second
+        val row = LinearLayout(this)
+        listOf(disC, timC, clmC, kalC).forEachIndexed { i, c ->
+            row.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(5) })
+        }
+        col.add(row, 6)
+
+        val locRow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(6), dp(6), dp(6))
+            background = box(t.surface, 12)
+        }
+        val lc = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setOnClickListener {
+                val l = TrackerState.lastFix
+                if (l != null) {
+                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("koordinat",
+                        String.format(Locale.US, "%.6f, %.6f", l.latitude, l.longitude)))
+                    Toast.makeText(this@MainActivity, "Koordinat disalin", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        val coordV = mono(tv("Menunggu sinyal GPS…", 12f, a, true))
+        surveyCoord = coordV
+        val subV = tv("", 10f, t.muted)
+        surveySub = subV
+        lc.addView(coordV)
+        lc.addView(subV)
+        locRow.addView(lc, LinearLayout.LayoutParams(0, -2, 1f))
+        locRow.addView(tv("⚑ Tandai", 11f, onColor(a), true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), 0, dp(10), 0)
+            background = box(a, 15)
+            setOnClickListener { markHere() }
+        }, LinearLayout.LayoutParams(-2, dp(30)))
+        locRow.addView(tv("☰", 16f, t.text, true).apply {
+            gravity = Gravity.CENTER
+            setOnClickListener { showSurveyPoints() }
+        }, LinearLayout.LayoutParams(dp(36), dp(30)))
+        col.add(locRow, 6)
+        updateSurveyInfo()
+
         val mp = MapPanel(this, t, a, false, true, if (mode == "Sepeda") "bike" else "foot")
-        mp.minimumHeight = dp(360)
+        mp.minimumHeight = dp(260)
         surveyMap = mp
-        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f))
+        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
         return col
     }
 
@@ -838,35 +924,62 @@ class MainActivity : Activity() {
 
     /** Halaman "Rute": peta sungguhan (Peta/Satelit) dengan garis rute langsung + tombol ke peta lengkap. */
     private fun buildRoutePage(a: Int): LinearLayout {
-        val col = column()
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(4), dp(16), dp(8))
+        }
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val g = GaugeView(this, t).apply {
             scaleMax = scaleFor(mode)
             accent = a
-            scale = 0.5f
+            scale = 1f
             digital = true
         }
         routeGauge = g
-        col.add(g, 0)
+        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
 
-        val avgC = statCard("Rata-rata", "0,0 km/jam", t.text)
-        val maxC = statCard("Maksimum", "0,0 km/jam", t.text)
-        routeAvgText = avgC.second
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val head = LinearLayout(this)
+        head.addView(tv("Target " + mode.lowercase(), 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 11f, t.good, true)
+        routePct = pct
+        head.addView(pct)
+        right.addView(head)
+        val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        val tval = mono(tv("0,00", 20f, a, true))
+        routeTarget = tval
+        vrow.addView(tval)
+        vrow.addView(tv("  / " + Themes.targetLabel(mode, TrackerState.target) +
+            (if (mode == "Jalan") " langkah" else ""), 11f, t.muted))
+        right.add(vrow, 2)
+        val bar = SegBar(this, t).apply { color = a }
+        routeBar = bar
+        right.add(bar, 6, 0f, dp(8))
+        val maxC = miniStat("Maks. km/jam", "0,0", a)
+        val avgC = miniStat("Rata-rata", "0,0", t.good)
         routeMaxText = maxC.second
-        statRow(col, avgC, maxC, 4)
+        routeAvgText = avgC.second
+        val r2 = LinearLayout(this)
+        r2.addView(maxC.first, LinearLayout.LayoutParams(0, -2, 1f))
+        r2.addView(avgC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
+        right.add(r2, 8)
+        top.addView(right, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        col.addView(top)
 
-        val disC = statCard("Jarak", "0,00 km")
-        val kalC = statCard("Kalori", "0 kkal")
-        val timC = statCard("Timer", "00:00:00")
-        routeDistText = disC.second
-        routeKcalText = kalC.second
-        routeTimeText = timC.second
+        val disC = miniStat("Jarak", "0,00 km")
+        val timC = miniStat("Durasi", "00:00:00")
+        val clmC = miniStat("Tanjakan", "0 m")
+        val kalC = miniStat("Kalori", "0 kkal")
+        routeDistText = disC.second; routeTimeText = timC.second
+        routeClimbText = clmC.second; routeKcalText = kalC.second
         val row = LinearLayout(this)
-        row.addView(disC.first, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(kalC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        row.addView(timC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        col.add(row, 8)
+        listOf(disC, timC, clmC, kalC).forEachIndexed { i, c ->
+            row.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(5) })
+        }
+        col.add(row, 6)
 
         val mp = MapPanel(this, t, a)
+        mp.minimumHeight = dp(260)
         trackMap = mp
         col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
         return col
@@ -990,7 +1103,7 @@ class MainActivity : Activity() {
             v.paint.isUnderlineText = selected
         }
         val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf("Beranda", "Utama", "Rute", "Grafik", "Survei").forEachIndexed { i, name ->
+        listOf("Beranda", "Utama", "Rute", "Grafik").forEachIndexed { i, name ->
             val v = tv(name, 13f, t.muted).apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(9), dp(10), dp(9), dp(6))
@@ -1012,14 +1125,13 @@ class MainActivity : Activity() {
             "Jalan" -> buildWalkBody(main, a)
             else -> buildBikeBody(main, a)
         }
-        pager.pages = 5
+        pager.pages = 4
         goTrackPage = { p -> pager.goTo(p, true) }
         val strip = LinearLayout(this)
         strip.addView(homePageView(m), LinearLayout.LayoutParams(w, -1))
         strip.addView(trackScroll(main), LinearLayout.LayoutParams(w, -1))
         strip.addView(trackScroll(buildRoutePage(a)), LinearLayout.LayoutParams(w, -1))
         strip.addView(trackScroll(buildChartPage(m, a)), LinearLayout.LayoutParams(w, -1))
-        strip.addView(trackScroll(buildSurveyPage(a)), LinearLayout.LayoutParams(w, -1))
         pager.addView(strip)
 
         val row = LinearLayout(this).apply {
@@ -1058,7 +1170,6 @@ class MainActivity : Activity() {
     private fun buildBikeBody(r: LinearLayout, a: Int) {
         val g = GaugeView(this, t).apply {
             scaleMax = scaleFor("Sepeda")
-            scale = 0.82f // Speedometer sepeda dibuat lebih besar agar mudah dibaca sambil berkendara.
             digital = digitalMode
             accent = a
             setOnClickListener { digitalMode = !digitalMode; digital = digitalMode; invalidate() }
@@ -1267,8 +1378,12 @@ class MainActivity : Activity() {
         chartDistText?.text = Fmt.dec(km, 2) + " km"
         chartTimeText?.text = Fmt.time(currentElapsed())
         chartKcalText?.text = "${calories()} kkal"
-        routeAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
-        routeMaxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+        routeAvgText?.text = Fmt.dec(averageSpeed(), 1)
+        routeMaxText?.text = Fmt.dec(maxSpeedKmh, 1)
+        routeClimbText?.text = "${climbM.roundToInt()} m"
+        routeTarget?.text = if (mode == "Jalan") Fmt.int(TrackerState.steps()) else Fmt.dec(km, 2)
+        routePct?.text = pct
+        routeBar?.let { it.fraction = frac; it.invalidate() }
         routeGauge?.let { it.speed = speedKmh; it.maxSpeed = maxSpeedKmh; it.invalidate() }
         chart?.let {
             it.values = TrackerState.speedSamples.toList()
