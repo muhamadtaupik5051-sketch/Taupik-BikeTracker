@@ -140,6 +140,7 @@ class MainActivity : Activity() {
     private var routeTarget: TextView? = null
     private var routePct: TextView? = null
     private var routeBar: SegBar? = null
+    private var routeBanner: TextView? = null
     private var chart: ChartView? = null
     private var chartAvgText: TextView? = null
     private var chartMaxText: TextView? = null
@@ -694,7 +695,7 @@ class MainActivity : Activity() {
         surveyCoord = null; surveySub = null
         chartDistText = null; chartTimeText = null; chartKcalText = null; routeDistText = null; routeTimeText = null
         routeGauge = null; routeAvgText = null; routeMaxText = null; routeKcalText = null
-        routeClimbText = null; routeTarget = null; routePct = null; routeBar = null
+        routeClimbText = null; routeTarget = null; routePct = null; routeBar = null; routeBanner = null
         chart = null; chartAvgText = null; chartMaxText = null
     }
 
@@ -977,6 +978,15 @@ class MainActivity : Activity() {
             row.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(5) })
         }
         col.add(row, 6)
+
+        val banner = tv("", 12f, t.good, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = box(t.surface, 12)
+            visibility = View.GONE
+        }
+        routeBanner = banner
+        col.add(banner, 6)
 
         val mp = MapPanel(this, t, a)
         mp.minimumHeight = dp(260)
@@ -1380,6 +1390,20 @@ class MainActivity : Activity() {
         chartKcalText?.text = "${calories()} kkal"
         routeAvgText?.text = Fmt.dec(averageSpeed(), 1)
         routeMaxText?.text = Fmt.dec(maxSpeedKmh, 1)
+        routeBanner?.let { bnr ->
+            if (running && TrackerState.guide.size >= 2) {
+                bnr.visibility = View.VISIBLE
+                if (TrackerState.offRoute) {
+                    bnr.text = "⚠ Keluar rute · " + TrackerState.offDistM.toInt() + " m dari jalur"
+                    bnr.setTextColor(t.bad)
+                } else {
+                    bnr.text = "✓ Di jalur · " + TrackerState.offDistM.toInt() + " m dari garis rute"
+                    bnr.setTextColor(t.good)
+                }
+            } else {
+                bnr.visibility = View.GONE
+            }
+        }
         routeClimbText?.text = "${climbM.roundToInt()} m"
         routeTarget?.text = if (mode == "Jalan") Fmt.int(TrackerState.steps()) else Fmt.dec(km, 2)
         routePct?.text = pct
@@ -1758,6 +1782,12 @@ class MainActivity : Activity() {
                 rec.kcal.toIntOrNull() ?: 0, rec.climb.toIntOrNull() ?: 0, rec.steps, rec.paceSec, rec.route
             ))
         }, 10, 0f, dp(54))
+        if (rec.route.size >= 2) {
+            r.add(btn("⇩   EKSPOR GPX", t.surface) {
+                FileOut.saveAndShare(this, GpxExport.fileName(rec.mode, rec.date), "application/gpx+xml",
+                    GpxExport.build(rec.mode + " " + rec.date, rec.route), "Ekspor GPX")
+            }, 10, 0f, dp(50))
+        }
         r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         r.add(btn("Hapus perjalanan ini", t.bad) {
             confirm("Hapus perjalanan ini?") {
@@ -1814,10 +1844,91 @@ class MainActivity : Activity() {
             Themes.setKeepOn(this, !on); showSettings()
         }, 8, 0f, dp(52))
 
-        r.add(tv("RideTrack Pro V3 • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+        r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
+        r.add(btn("⇩   Cadangkan riwayat", t.surface) { exportHistory() }, 8, 0f, dp(52))
+        r.add(btn("⇧   Pulihkan riwayat dari file", t.surface) { importHistoryPick() }, 8, 0f, dp(52))
+        val ignoring = batteryIgnored()
+        r.add(btn("Hemat baterai: " + (if (ignoring) "DIKECUALIKAN (baik)" else "BELUM DIKECUALIKAN — ketuk untuk atur"), t.surface) {
+            openBatterySettings()
+        }, 8, 0f, dp(52))
+
+        r.add(tv("RideTrack Pro • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
             gravity = Gravity.CENTER
         }, 20)
         show(3, r)
+    }
+
+    // ---------- Cadangan riwayat dan pengaturan baterai ----------
+
+    private val reqImport = 4711
+
+    private fun exportHistory() {
+        val list = rawRecords()
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Belum ada riwayat untuk dicadangkan.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+        FileOut.saveAndShare(this, "RideTrack_riwayat_$stamp.txt", "text/plain",
+            list.joinToString("\n"), "Cadangkan riwayat")
+    }
+
+    private fun importHistoryPick() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqImport)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih file.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != reqImport || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+            val have = rawRecords()
+            val seen = HashSet<String>(have)
+            var added = 0
+            for (line in text.lines()) {
+                val l = line.trim()
+                if (l.isEmpty() || parse(l) == null || !seen.add(l)) continue
+                have.add(l)
+                added++
+            }
+            if (added > 0) writeRecords(have)
+            Toast.makeText(this,
+                if (added > 0) "$added aktivitas dipulihkan" else "Tidak ada aktivitas baru di file itu",
+                Toast.LENGTH_LONG).show()
+            showSettings()
+        } catch (e: Exception) {
+            Toast.makeText(this, "File tidak bisa dibaca.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun batteryIgnored(): Boolean = try {
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        Build.VERSION.SDK_INT < 23 || pm.isIgnoringBatteryOptimizations(packageName)
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun openBatterySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+            } catch (e2: Exception) {
+                Toast.makeText(this, "Buka Pengaturan > Baterai secara manual.", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
