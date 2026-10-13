@@ -27,6 +27,80 @@ object TrackerState {
     var lastFix: Location? = null
     var climbM = 0f
     var gpsStatus = "Mencari GPS…"
+    /** Garis panduan dari rute terpilih (lat, lon) dan status keluar rute. */
+    var guide: List<DoubleArray> = emptyList()
+    var offRoute = false
+    var offDistM = 0f
+    /** 1 = baru keluar rute, 2 = kembali ke rute. Dibaca lalu direset oleh TrackingService. */
+    var routeEvent = 0
+
+    /** Muat rute panduan (★) dari penyimpanan "survey". Format rencana: id|nama|road|profil|jarak|titik|loop|garis. */
+    fun loadGuide(c: Context) {
+        offRoute = false
+        offDistM = 0f
+        routeEvent = 0
+        guide = emptyList()
+        try {
+            val sp = c.applicationContext.getSharedPreferences("survey", Context.MODE_PRIVATE)
+            val act = sp.getString("active_plan", "") ?: ""
+            if (act.isEmpty()) return
+            val plan = (sp.getString("plans", "") ?: "").lines().filter { it.isNotBlank() }
+                .map { it.split("|") }.firstOrNull { it.size >= 6 && it[0] == act } ?: return
+            val geo = parsePoints(plan.getOrNull(7) ?: "")
+            if (geo.size >= 2) {
+                guide = geo
+            } else {
+                val wps = parsePoints(plan[5]).toMutableList()
+                if (plan.getOrNull(6) == "1" && wps.size >= 2) wps.add(wps[0])
+                guide = wps
+            }
+        } catch (e: Exception) {
+            guide = emptyList()
+        }
+    }
+
+    private fun parsePoints(s: String): List<DoubleArray> = s.split(";").mapNotNull { q ->
+        val p = q.split(",")
+        val la = p.getOrNull(0)?.toDoubleOrNull()
+        val lo = p.getOrNull(1)?.toDoubleOrNull()
+        if (la != null && lo != null) doubleArrayOf(la, lo) else null
+    }
+
+    /** Jarak terdekat (meter) dari titik ke garis panduan. */
+    private fun distToGuide(lat: Double, lon: Double): Float {
+        val k = Math.cos(Math.toRadians(lat))
+        var best = Double.MAX_VALUE
+        for (i in 0 until guide.size - 1) {
+            val ax = (guide[i][1] - lon) * k * 111320.0
+            val ay = (guide[i][0] - lat) * 110540.0
+            val bx = (guide[i + 1][1] - lon) * k * 111320.0
+            val by = (guide[i + 1][0] - lat) * 110540.0
+            val dx = bx - ax
+            val dy = by - ay
+            val len2 = dx * dx + dy * dy
+            val u = if (len2 <= 0.0) 0.0 else ((-ax) * dx + (-ay) * dy) / len2
+            val t = if (u < 0.0) 0.0 else if (u > 1.0) 1.0 else u
+            val px = ax + t * dx
+            val py = ay + t * dy
+            val d = Math.sqrt(px * px + py * py)
+            if (d < best) best = d
+        }
+        return best.toFloat()
+    }
+
+    private fun checkRoute(location: Location) {
+        if (guide.size < 2) return
+        val d = distToGuide(location.latitude, location.longitude)
+        offDistM = d
+        val limit = maxOf(50f, location.accuracy * 2f)
+        if (!offRoute && d > limit) {
+            offRoute = true
+            routeEvent = 1
+        } else if (offRoute && d < 35f) {
+            offRoute = false
+            routeEvent = 2
+        }
+    }
     val route = mutableListOf<DoubleArray>()
     /** Waktu (detik) tiap kilometer penuh yang sudah diselesaikan. */
     val splits = mutableListOf<Int>()
@@ -104,6 +178,8 @@ object TrackerState {
         refAlt = Double.NaN
         route.clear()
         gpsStatus = "Mencari GPS…"
+        offRoute = false
+        routeEvent = 0
         running = true
         paused = false
     }
@@ -174,6 +250,7 @@ object TrackerState {
         gpsStatus = "GPS ±${location.accuracy.toInt()} m"
         lastFix = location
         if (!running || paused) return
+        checkRoute(location)
 
         // Diam di tempat: GPS tetap bergoyang beberapa meter, jangan dihitung sebagai jarak.
         val still = location.hasSpeed() && location.speed < 0.5f
