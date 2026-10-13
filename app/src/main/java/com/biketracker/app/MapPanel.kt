@@ -54,6 +54,7 @@ class MapPanel(
     private var planOn = false
     private var planRoad = true
     private var planLoop = false
+    private var planGeo = ""
     private var loopPill: TextView? = null
     private var planDist = 0.0
     private var planWps: List<DoubleArray> = emptyList()
@@ -81,6 +82,11 @@ class MapPanel(
         @JavascriptInterface
         fun onPlan(dist: Double, count: Int, snapped: Boolean, err: Boolean, json: String) {
             handler.post { onPlanChanged(dist, count, snapped, err, json) }
+        }
+
+        @JavascriptInterface
+        fun onGeo(geo: String) {
+            handler.post { planGeo = geo }
         }
 
         @JavascriptInterface
@@ -531,7 +537,7 @@ class MapPanel(
                 val list = loadPlans()
                 list.add(0, listOf(
                     System.currentTimeMillis().toString(), name, if (planRoad) "1" else "0",
-                    profile, planDist.toInt().toString(), wpsText(planWps), if (planLoop) "1" else "0"
+                    profile, planDist.toInt().toString(), wpsText(planWps), if (planLoop) "1" else "0", planGeo
                 ))
                 prefs().edit().putString("plans", list.take(20).joinToString("\n") { it.joinToString("|") }).apply()
                 Toast.makeText(context, "Rencana \"$name\" disimpan", Toast.LENGTH_SHORT).show()
