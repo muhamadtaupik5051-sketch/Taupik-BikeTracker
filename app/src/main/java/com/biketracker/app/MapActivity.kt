@@ -304,17 +304,14 @@ class MapActivity : Activity() {
             tabRow.addView(v, LinearLayout.LayoutParams(-2, dp(30)))
         }
         styleTabs()
-        page1.addView(tabRow, LinearLayout.LayoutParams(-2, -2).apply {
-            leftMargin = dp(16); topMargin = dp(4); bottomMargin = dp(8)
-        })
 
         statusText = TextView(this).apply {
             text = "Menyiapkan peta GPS..."
-            textSize = 12f
+            textSize = 11f
             setTextColor(t.muted)
-            setPadding(dp(16), 0, dp(16), dp(6))
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            background = round((t.surface and 0x00FFFFFF) or 0xDD000000.toInt(), 12)
         }
-        page1.addView(statusText)
 
         mapView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -348,11 +345,19 @@ class MapActivity : Activity() {
         controls.addView(mapButton("◎") {
             if (pageReady) mapView.evaluateJavascript("locate()", null)
         }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        mapArea.addView(controls, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply {
-            rightMargin = dp(12)
+        mapArea.addView(controls, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP).apply {
+            rightMargin = dp(10); topMargin = dp(10)
+        })
+        mapArea.addView(tabRow, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = dp(10); topMargin = dp(10)
+        })
+        mapArea.addView(statusText, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = dp(10); topMargin = dp(52)
+        })
+        mapArea.addView(buildPlanBar(), FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+            leftMargin = dp(8); rightMargin = dp(8); bottomMargin = dp(8)
         })
         page1.addView(mapArea, LinearLayout.LayoutParams(-1, 0, 1f))
-        page1.addView(buildPlanBar())
 
         // Ringkasan di bawah peta (hanya untuk rute riwayat dan tracking aktif)
         if (showPanel) {
@@ -408,35 +413,7 @@ class MapActivity : Activity() {
         }
 
         // Navigasi bawah, sama seperti di layar utama, supaya tidak hilang saat melihat peta.
-        // Dua halaman yang bisa digeser: Peta dan Survei Lokasi
-        val sw = resources.displayMetrics.widthPixels
-        val pageTabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        val pageTabViews = ArrayList<TextView>()
-        fun stylePageTab(v: TextView, sel: Boolean) {
-            v.setTextColor(if (sel) accentColor else t.muted)
-            v.setTypeface(null, if (sel) Typeface.BOLD else Typeface.NORMAL)
-            v.paint.isUnderlineText = sel
-        }
-        lateinit var pager: PagerScroll
-        listOf("Routes", "Survei Lokasi").forEachIndexed { i, name ->
-            val v = TextView(this).apply {
-                text = name; textSize = 14f; gravity = Gravity.CENTER
-                setPadding(dp(16), dp(6), dp(16), dp(6))
-                setOnClickListener { pager.goTo(i, true) }
-            }
-            stylePageTab(v, i == 0)
-            pageTabViews.add(v)
-            pageTabs.addView(v)
-        }
-        pager = PagerScroll(this, sw) { p -> pageTabViews.forEachIndexed { i, v -> stylePageTab(v, i == p) } }
-        pager.pages = 2
-        val strip = LinearLayout(this)
-        strip.addView(page1, LinearLayout.LayoutParams(sw, -1))
-        strip.addView(buildSurveyPage(), LinearLayout.LayoutParams(sw, -1))
-        pager.addView(strip)
-        goMapPage = { pager.goTo(0, true) }
-        root.addView(pageTabs)
-        root.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(page1, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(bottomNav())
         setContentView(root)
 
@@ -666,6 +643,62 @@ class MapActivity : Activity() {
         planInfo?.text = Fmt.dec(dist / 1000.0, 2) + " km • " + dur + " • " + count + " titik • " + mode
     }
 
+    /** Daftar rute tersimpan: buka, jadikan garis panduan, buka di Google Maps, atau hapus. */
+    private fun savedPlansDialog() {
+        val plans = loadPlans()
+        if (plans.isEmpty()) {
+            Toast.makeText(this, "Belum ada rute tersimpan.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val active = prefsSurvey().getString("active_plan", "") ?: ""
+        val names = Array(plans.size) { i ->
+            val p = plans[i]
+            (if (p[0] == active) "★ " else "") + p[1] + " · " +
+                Fmt.dec((p[4].toDoubleOrNull() ?: 0.0) / 1000.0, 2) + " km"
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Rute saya")
+            .setItems(names) { _, i ->
+                val p = plans[i]
+                val isActive = p[0] == active
+                val acts = arrayOf(
+                    "Buka di peta",
+                    if (isActive) "Matikan sebagai panduan" else "Jadikan garis panduan (★)",
+                    "Buka di Google Maps",
+                    "Hapus rute"
+                )
+                android.app.AlertDialog.Builder(this)
+                    .setTitle(p[1])
+                    .setItems(acts) { _, k ->
+                        when (k) {
+                            0 -> {
+                                planRoad = p[2] == "1"
+                                if (!planOn) { planOn = true; applyPlanUi() }
+                                loadPlanOnMap(p, true)
+                            }
+                            1 -> {
+                                prefsSurvey().edit().putString("active_plan", if (isActive) "" else p[0]).apply()
+                                Toast.makeText(this,
+                                    if (isActive) "Panduan dimatikan" else "Dipakai sebagai garis panduan",
+                                    Toast.LENGTH_SHORT).show()
+                            }
+                            2 -> openDirections(parseWps(p[5]), p[3])
+                            else -> {
+                                val all = loadPlans()
+                                all.removeAll { it[0] == p[0] }
+                                savePlans(all)
+                                if (isActive) prefsSurvey().edit().putString("active_plan", "").apply()
+                                Toast.makeText(this, "Rute dihapus", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    .setNegativeButton("Tutup", null)
+                    .show()
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
+
     private fun longPressDialog(lat: Double, lon: Double) {
         val la = String.format(Locale.US, "%.6f", lat)
         val lo = String.format(Locale.US, "%.6f", lon)
@@ -746,56 +779,63 @@ class MapActivity : Activity() {
         applyPlanUi()
     }
 
+    private fun spill(label: String, fill: Int, action: () -> Unit) = pill(label, fill, action).apply {
+        textSize = 11.5f
+        background = round(fill, 16)
+    }
+
     private fun buildPlanBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(12))
-            background = round(t.surface, 18)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = round((t.surface and 0x00FFFFFF) or 0xEE000000.toInt(), 16)
             visibility = View.GONE
         }
         bar.addView(TextView(this).apply {
-            text = "Rencana rute"; textSize = 14f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+            text = "Rencana rute"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
         })
         val info = TextView(this).apply {
-            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 12f; setTextColor(t.muted)
+            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 11f; setTextColor(t.muted)
         }
         planInfo = info
         bar.addView(info, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
 
         val row1 = LinearLayout(this)
-        row1.addView(pill("↶ Urungkan", t.bg) {
+        row1.addView(spill("↶ Urungkan", t.bg) {
             if (pageReady) mapView.evaluateJavascript("undoWp()", null)
-        }, LinearLayout.LayoutParams(0, dp(40), 1f))
-        row1.addView(pill("Hapus semua", t.bg) {
+        }, LinearLayout.LayoutParams(0, dp(32), 1f))
+        row1.addView(spill("Hapus semua", t.bg) {
             if (pageReady) mapView.evaluateJavascript("clearPlan()", null)
-        }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { leftMargin = dp(6) })
-        val rb = pill("Ikuti jalan: ON", t.bg) {
+        }, LinearLayout.LayoutParams(0, dp(32), 1f).apply { leftMargin = dp(6) })
+        val rb = spill("Ikuti jalan: ON", t.bg) {
             planRoad = !planRoad
             planRoadBtn?.text = if (planRoad) "Ikuti jalan: ON" else "Ikuti jalan: OFF"
             if (pageReady) mapView.evaluateJavascript("setRoad($planRoad,'${planProfile()}')", null)
         }
         planRoadBtn = rb
-        row1.addView(rb, LinearLayout.LayoutParams(0, dp(40), 1.2f).apply { leftMargin = dp(6) })
-        bar.addView(row1, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        row1.addView(rb, LinearLayout.LayoutParams(0, dp(32), 1.2f).apply { leftMargin = dp(6) })
+        bar.addView(row1, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
 
         val row3 = LinearLayout(this)
-        val lb = pill("→ Sekali jalan", t.bg) {
+        val lb = spill("→ Sekali jalan", t.bg) {
             planLoop = !planLoop
             loopBtn?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
             if (pageReady) mapView.evaluateJavascript("setLoop($planLoop)", null)
         }
         loopBtn = lb
-        row3.addView(lb, LinearLayout.LayoutParams(0, dp(40), 1.6f))
-        row3.addView(pill("☷ Titik", t.bg) { waypointListDialog() }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { leftMargin = dp(6) })
-        row3.addView(pill("⌕ Cari", t.bg) { searchDialog() }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { leftMargin = dp(6) })
+        row3.addView(lb, LinearLayout.LayoutParams(0, dp(32), 1.6f))
+        row3.addView(spill("☷ Titik", t.bg) { waypointListDialog() }, LinearLayout.LayoutParams(0, dp(32), 1f).apply { leftMargin = dp(6) })
+        row3.addView(spill("⌕ Cari", t.bg) { searchDialog() }, LinearLayout.LayoutParams(0, dp(32), 1f).apply { leftMargin = dp(6) })
         bar.addView(row3, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
 
         val row2 = LinearLayout(this)
-        row2.addView(pill("Simpan rute", accentColor) { savePlanDialog() }, LinearLayout.LayoutParams(0, dp(42), 1f))
-        row2.addView(pill("Buka di Google Maps", t.bg) {
+        row2.addView(spill("Simpan rute", accentColor) { savePlanDialog() }, LinearLayout.LayoutParams(0, dp(34), 1f))
+        row2.addView(spill("☰ Rute saya", t.bg) { savedPlansDialog() },
+            LinearLayout.LayoutParams(0, dp(34), 1.1f).apply { leftMargin = dp(6) })
+        row2.addView(spill("Maps ↗", t.bg) {
             if (planWps.size < 2) Toast.makeText(this, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
             else openDirections(planWps, planProfile())
-        }, LinearLayout.LayoutParams(0, dp(42), 1.3f).apply { leftMargin = dp(6) })
+        }, LinearLayout.LayoutParams(0, dp(34), 0.8f).apply { leftMargin = dp(6) })
         bar.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         planBar = bar
         return bar
