@@ -118,6 +118,11 @@ class MapActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun onGeo(geo: String) {
+            handler.post { planGeo = geo }
+        }
+
+        @JavascriptInterface
         fun onLongPress(lat: Double, lon: Double) {
             handler.post { longPressDialog(lat, lon) }
         }
@@ -578,6 +583,7 @@ class MapActivity : Activity() {
     // ---------- Rencana Rute manual ----------
     private var planOn = false
     private var planLoop = false
+    private var planGeo = ""
     private var loopBtn: TextView? = null
     private var planRoad = true
     private var planDist = 0.0
@@ -876,7 +882,7 @@ class MapActivity : Activity() {
                 val list = loadPlans()
                 list.add(0, listOf(
                     System.currentTimeMillis().toString(), name, if (planRoad) "1" else "0",
-                    planProfile(), planDist.toInt().toString(), wps, if (planLoop) "1" else "0"
+                    planProfile(), planDist.toInt().toString(), wps, if (planLoop) "1" else "0", planGeo
                 ))
                 savePlans(list.take(20))
                 refreshPlans()
