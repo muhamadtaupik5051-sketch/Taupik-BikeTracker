@@ -145,7 +145,7 @@ class MapActivity : Activity() {
 
     private fun mapButton(label: String, action: () -> Unit) = TextView(this).apply {
         text = label
-        textSize = 20f
+        textSize = 15f
         setTextColor(t.text)
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
@@ -343,20 +343,19 @@ class MapActivity : Activity() {
         val mapArea = FrameLayout(this)
         mapArea.addView(mapView, FrameLayout.LayoutParams(-1, -1))
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val gap = dp(8)
-        controls.addView(mapButton("✎") { togglePlan() },
-            LinearLayout.LayoutParams(dp(44), dp(44)).apply { bottomMargin = gap * 2 })
-        controls.addView(mapButton("⚑") { marksDialog() },
-            LinearLayout.LayoutParams(dp(44), dp(44)).apply { bottomMargin = gap * 2 })
+        val gap = dp(6)
+        val bs = dp(34)
+        controls.addView(mapButton("✎") { togglePlan() }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
+        controls.addView(mapButton("⚑") { marksDialog() }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
         controls.addView(mapButton("+") {
             if (pageReady) mapView.evaluateJavascript("if(map)map.zoomIn()", null)
-        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { bottomMargin = gap })
+        }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
         controls.addView(mapButton("−") {
             if (pageReady) mapView.evaluateJavascript("if(map)map.zoomOut()", null)
-        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { bottomMargin = gap })
+        }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
         controls.addView(mapButton("◎") {
             if (pageReady) mapView.evaluateJavascript("locate()", null)
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }, LinearLayout.LayoutParams(bs, bs))
         mapArea.addView(controls, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP).apply {
             rightMargin = dp(10); topMargin = dp(10)
         })
@@ -474,6 +473,7 @@ class MapActivity : Activity() {
 
     /** Dipanggil sekali ketika Leaflet sudah siap. */
     private fun onMapReady() {
+        mapView.evaluateJavascript("setCmpTop(212)", null)
         applyLayer()
         val vr = viewRoute
         when {
@@ -792,23 +792,30 @@ class MapActivity : Activity() {
         applyPlanUi()
     }
 
-    private fun spill(label: String, fill: Int, action: () -> Unit) = pill(label, fill, action).apply {
-        textSize = 11.5f
-        background = round(fill, 16)
+    /** Tombol teks saja (tanpa bingkai) supaya peta tetap terlihat penuh. */
+    private fun spill(label: String, fill: Int, action: () -> Unit) = TextView(this).apply {
+        text = label
+        textSize = 11f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(if (fill == accentColor) 0xFF0A5FB4.toInt() else 0xFF0B1620.toInt())
+        setShadowLayer(4f, 0f, 0f, 0xFFFFFFFF.toInt())
+        setOnClickListener { action() }
     }
 
     private fun buildPlanBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = round((t.surface and 0x00FFFFFF) or 0xEE000000.toInt(), 16)
+            setPadding(dp(8), dp(2), dp(8), dp(2))
             visibility = View.GONE
         }
         bar.addView(TextView(this).apply {
-            text = "Rencana rute"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+            text = "Rencana rute"; textSize = 11f; setTextColor(0xFF0B1620.toInt()); typeface = Typeface.DEFAULT_BOLD
+            setShadowLayer(4f, 0f, 0f, 0xFFFFFFFF.toInt())
         })
         val info = TextView(this).apply {
-            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 11f; setTextColor(t.muted)
+            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 10f; setTextColor(0xFF1B2B38.toInt())
+            setShadowLayer(4f, 0f, 0f, 0xFFFFFFFF.toInt())
         }
         planInfo = info
         bar.addView(info, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
@@ -816,17 +823,17 @@ class MapActivity : Activity() {
         val row1 = LinearLayout(this)
         row1.addView(spill("↶ Urungkan", t.bg) {
             if (pageReady) mapView.evaluateJavascript("undoWp()", null)
-        }, LinearLayout.LayoutParams(0, dp(32), 1f))
+        }, LinearLayout.LayoutParams(0, dp(26), 1f))
         row1.addView(spill("Hapus semua", t.bg) {
             if (pageReady) mapView.evaluateJavascript("clearPlan()", null)
-        }, LinearLayout.LayoutParams(0, dp(32), 1f).apply { leftMargin = dp(6) })
+        }, LinearLayout.LayoutParams(0, dp(26), 1f).apply { leftMargin = dp(6) })
         val rb = spill("Ikuti jalan: ON", t.bg) {
             planRoad = !planRoad
             planRoadBtn?.text = if (planRoad) "Ikuti jalan: ON" else "Ikuti jalan: OFF"
             if (pageReady) mapView.evaluateJavascript("setRoad($planRoad,'${planProfile()}')", null)
         }
         planRoadBtn = rb
-        row1.addView(rb, LinearLayout.LayoutParams(0, dp(32), 1.2f).apply { leftMargin = dp(6) })
+        row1.addView(rb, LinearLayout.LayoutParams(0, dp(26), 1.2f).apply { leftMargin = dp(6) })
         bar.addView(row1, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
 
         val row3 = LinearLayout(this)
@@ -836,19 +843,19 @@ class MapActivity : Activity() {
             if (pageReady) mapView.evaluateJavascript("setLoop($planLoop)", null)
         }
         loopBtn = lb
-        row3.addView(lb, LinearLayout.LayoutParams(0, dp(32), 1.6f))
-        row3.addView(spill("☷ Titik", t.bg) { waypointListDialog() }, LinearLayout.LayoutParams(0, dp(32), 1f).apply { leftMargin = dp(6) })
-        row3.addView(spill("⌕ Cari", t.bg) { searchDialog() }, LinearLayout.LayoutParams(0, dp(32), 1f).apply { leftMargin = dp(6) })
+        row3.addView(lb, LinearLayout.LayoutParams(0, dp(26), 1.6f))
+        row3.addView(spill("☷ Titik", t.bg) { waypointListDialog() }, LinearLayout.LayoutParams(0, dp(26), 1f).apply { leftMargin = dp(6) })
+        row3.addView(spill("⌕ Cari", t.bg) { searchDialog() }, LinearLayout.LayoutParams(0, dp(26), 1f).apply { leftMargin = dp(6) })
         bar.addView(row3, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
 
         val row2 = LinearLayout(this)
-        row2.addView(spill("Simpan rute", accentColor) { savePlanDialog() }, LinearLayout.LayoutParams(0, dp(34), 1f))
+        row2.addView(spill("Simpan rute", accentColor) { savePlanDialog() }, LinearLayout.LayoutParams(0, dp(26), 1f))
         row2.addView(spill("☰ Rute saya", t.bg) { savedPlansDialog() },
-            LinearLayout.LayoutParams(0, dp(34), 1.1f).apply { leftMargin = dp(6) })
+            LinearLayout.LayoutParams(0, dp(26), 1.1f).apply { leftMargin = dp(6) })
         row2.addView(spill("Maps ↗", t.bg) {
             if (planWps.size < 2) Toast.makeText(this, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
             else openDirections(planWps, planProfile())
-        }, LinearLayout.LayoutParams(0, dp(34), 0.8f).apply { leftMargin = dp(6) })
+        }, LinearLayout.LayoutParams(0, dp(26), 0.8f).apply { leftMargin = dp(6) })
         bar.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         planBar = bar
         return bar
