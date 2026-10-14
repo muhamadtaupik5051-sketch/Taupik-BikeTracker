@@ -40,7 +40,9 @@ class TrackingService : Service() {
             val ev = TrackerState.routeEvent
             if (ev != 0) {
                 TrackerState.routeEvent = 0
-                buzz(if (ev == 1) longArrayOf(0, 500, 200, 500, 200, 500) else longArrayOf(0, 200))
+                val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
+                if (ap.getBoolean("alert_sound", true)) beep(ev == 1)
+                if (ap.getBoolean("alert_vibe", true)) buzz(if (ev == 1) longArrayOf(0, 500, 200, 500, 200, 500) else longArrayOf(0, 200))
                 notifyUpdate()
             }
         }
@@ -92,6 +94,15 @@ class TrackingService : Service() {
             else -> if (!TrackerState.running) shutdown()
         }
         return START_NOT_STICKY
+    }
+
+    private fun beep(long: Boolean) {
+        try {
+            val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+            tg.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, if (long) 900 else 250)
+            handler.postDelayed({ try { tg.release() } catch (e: Exception) {} }, 1500)
+        } catch (e: Exception) {
+        }
     }
 
     @Suppress("DEPRECATION")
