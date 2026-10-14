@@ -158,7 +158,7 @@ object MapHtml {
                 var reqId = 0;
 
                 function planInit() {
-                  plan.line = L.polyline([], { color: '#FFB020', weight: 3, dashArray: '6 7' }).addTo(map);
+                  plan.line = L.polyline([], { color: '#1E90FF', weight: 6, opacity: 0.7, lineJoin: 'round', lineCap: 'round' }).addTo(map);
                   map.on('click', function (e) { if (plan.on) { addWp(e.latlng.lat, e.latlng.lng); } });
                   map.on('contextmenu', function (e) {
                     if (!plan.on) { return; }
