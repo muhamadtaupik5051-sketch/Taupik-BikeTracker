@@ -799,142 +799,6 @@ class MainActivity : Activity() {
         (surveyPrefs().getString("points", "") ?: "").lines().filter { it.isNotBlank() }
             .map { it.split("|") }.filter { it.size >= 5 }.toMutableList()
 
-    private fun markHere() {
-        val l = TrackerState.lastFix
-        if (l == null) {
-            Toast.makeText(this, "Belum ada sinyal GPS.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val list = surveyPoints()
-        val name = "Titik " + (list.size + 1)
-        val p = listOf(
-            System.currentTimeMillis().toString(),
-            String.format(Locale.US, "%.6f", l.latitude),
-            String.format(Locale.US, "%.6f", l.longitude),
-            if (l.hasAltitude()) l.altitude.roundToInt().toString() else "0",
-            name
-        )
-        list.add(0, p)
-        surveyPrefs().edit().putString("points", list.take(30).joinToString("\n") { it.joinToString("|") }).apply()
-        surveyMap?.markPoint(l.latitude, l.longitude, name)
-        Toast.makeText(this, name + " disimpan", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun showSurveyPoints() {
-        val pts = surveyPoints()
-        if (pts.isEmpty()) {
-            Toast.makeText(this, "Belum ada titik. Tekan Tandai untuk menyimpan lokasi.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val names = pts.map { it[4] + " · " + it[1] + ", " + it[2] }
-        AlertDialog.Builder(this)
-            .setTitle("Titik tersimpan")
-            .setItems(names.toTypedArray()) { _, i ->
-                surveyMap?.focusPoint(pts[i][1].toDoubleOrNull() ?: 0.0, pts[i][2].toDoubleOrNull() ?: 0.0)
-            }
-            .setNegativeButton("Tutup", null)
-            .show()
-    }
-
-    /** Halaman "Survei": speedometer kecil, ringkasan, dan peta untuk mengatur titik yang akan dilewati. */
-    private fun buildSurveyPage(a: Int): LinearLayout {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(4), dp(16), dp(8))
-        }
-        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val g = GaugeView(this, t).apply {
-            scaleMax = scaleFor(mode)
-            accent = a
-            scale = 1f
-            digital = true
-        }
-        surveyGauge = g
-        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
-
-        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val head = LinearLayout(this)
-        head.addView(tv("Target " + mode.lowercase(), 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
-        val pct = tv("0%", 11f, t.good, true)
-        surveyPct = pct
-        head.addView(pct)
-        right.addView(head)
-        val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
-        val tval = mono(tv("0,00", 20f, a, true))
-        surveyTarget = tval
-        vrow.addView(tval)
-        vrow.addView(tv("  / " + Themes.targetLabel(mode, TrackerState.target) +
-            (if (mode == "Jalan") " langkah" else ""), 11f, t.muted))
-        right.add(vrow, 2)
-        val bar = SegBar(this, t).apply { color = a }
-        surveyBar = bar
-        right.add(bar, 6, 0f, dp(8))
-        val maxC = miniStat("Maks. km/jam", "0,0", a)
-        val avgC = miniStat("Rata-rata", "0,0", t.good)
-        surveyMax = maxC.second
-        surveyAvg = avgC.second
-        val r2 = LinearLayout(this)
-        r2.addView(maxC.first, LinearLayout.LayoutParams(0, -2, 1f))
-        r2.addView(avgC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
-        right.add(r2, 8)
-        top.addView(right, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        col.addView(top)
-
-        val disC = miniStat("Jarak", "0,00 km")
-        val timC = miniStat("Durasi", "00:00:00")
-        val clmC = miniStat("Tanjakan", "0 m")
-        val kalC = miniStat("Kalori", "0 kkal")
-        surveyDist = disC.second; surveyTime = timC.second; surveyClimb = clmC.second; surveyKcal = kalC.second
-        val row = LinearLayout(this)
-        listOf(disC, timC, clmC, kalC).forEachIndexed { i, c ->
-            row.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(5) })
-        }
-        col.add(row, 6)
-
-        val locRow = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(6), dp(6), dp(6))
-            background = box(t.surface, 12)
-        }
-        val lc = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setOnClickListener {
-                val l = TrackerState.lastFix
-                if (l != null) {
-                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("koordinat",
-                        String.format(Locale.US, "%.6f, %.6f", l.latitude, l.longitude)))
-                    Toast.makeText(this@MainActivity, "Koordinat disalin", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-        val coordV = mono(tv("Menunggu sinyal GPS…", 12f, a, true))
-        surveyCoord = coordV
-        val subV = tv("", 10f, t.muted)
-        surveySub = subV
-        lc.addView(coordV)
-        lc.addView(subV)
-        locRow.addView(lc, LinearLayout.LayoutParams(0, -2, 1f))
-        locRow.addView(tv("⚑ Tandai", 11f, onColor(a), true).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(10), 0, dp(10), 0)
-            background = box(a, 15)
-            setOnClickListener { markHere() }
-        }, LinearLayout.LayoutParams(-2, dp(30)))
-        locRow.addView(tv("☰", 16f, t.text, true).apply {
-            gravity = Gravity.CENTER
-            setOnClickListener { showSurveyPoints() }
-        }, LinearLayout.LayoutParams(dp(36), dp(30)))
-        col.add(locRow, 6)
-        updateSurveyInfo()
-
-        val mp = MapPanel(this, t, a, false, true, if (mode == "Sepeda") "bike" else "foot")
-        mp.minimumHeight = dp(260)
-        surveyMap = mp
-        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
-        return col
-    }
-
     private fun trackScroll(col: LinearLayout) = ScrollView(this).apply {
         isFillViewport = true
         setBackgroundColor(t.bg)
@@ -1867,6 +1731,17 @@ class MainActivity : Activity() {
         val on = Themes.keepOn(this)
         r.add(btn("Layar menyala saat tracking: " + (if (on) "AKTIF" else "MATI"), t.surface) {
             Themes.setKeepOn(this, !on); showSettings()
+        }, 8, 0f, dp(52))
+
+        r.add(tv("PERINGATAN KELUAR RUTE", 11f, t.muted, true), 20)
+        val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
+        val vibOn = ap.getBoolean("alert_vibe", true)
+        r.add(btn("Getar peringatan: " + (if (vibOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_vibe", !vibOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val sndOn = ap.getBoolean("alert_sound", true)
+        r.add(btn("Suara peringatan: " + (if (sndOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_sound", !sndOn).apply(); showSettings()
         }, 8, 0f, dp(52))
 
         r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
