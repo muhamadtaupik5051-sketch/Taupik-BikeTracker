@@ -41,8 +41,9 @@ class TrackingService : Service() {
             if (ev != 0) {
                 TrackerState.routeEvent = 0
                 val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
-                if (ap.getBoolean("alert_sound", true)) beep(ev == 1)
-                if (ap.getBoolean("alert_vibe", true)) buzz(if (ev == 1) longArrayOf(0, 500, 200, 500, 200, 500) else longArrayOf(0, 200))
+                val all = ap.getBoolean("alert_route", true)
+                if (all && ap.getBoolean("alert_sound", true)) beep(ev == 1)
+                if (all && ap.getBoolean("alert_vibe", true)) buzz(if (ev == 1) longArrayOf(0, 500, 200, 500, 200, 500) else longArrayOf(0, 200))
                 notifyUpdate()
             }
         }
@@ -205,7 +206,7 @@ class TrackingService : Service() {
             "Jalan" -> Fmt.int(TrackerState.steps()) + " langkah • " + Fmt.dec(km, 2) + " km • " + time
             else -> Fmt.dec(km, 2) + " km • " + time
         }
-        val body = (if (TrackerState.offRoute) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else "")
+        val body = (if (TrackerState.offRoute && getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_route", true)) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else "")
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else Notification.Builder(this)
         return b.setSmallIcon(android.R.drawable.ic_menu_mylocation)
