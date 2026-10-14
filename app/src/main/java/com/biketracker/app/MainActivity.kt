@@ -78,6 +78,7 @@ class MainActivity : Activity() {
     private var splashDone = false
     private var homePage = 0
     private var trackPage = 0
+    private var mulaiScreen = false
     private var goTrackPage: (Int) -> Unit = {}
     private val modes = listOf("Sepeda", "Lari", "Jalan")
 
@@ -163,8 +164,9 @@ class MainActivity : Activity() {
         setIntent(intent)
         when (intent?.getIntExtra("tab", -1) ?: -1) {
             0 -> showHome()
-            2 -> showHistory()
-            3 -> showSettings()
+            2 -> showMulai()
+            3 -> showHistory()
+            4 -> showSettings()
         }
     }
 
@@ -175,6 +177,7 @@ class MainActivity : Activity() {
             // Service masih berjalan (mis. aplikasi dibuka lagi dari notifikasi)
             TrackerState.running -> {
                 splashDone = true
+                mulaiScreen = true
                 showTracking()
                 if (!paused) handler.post(timer)
             }
@@ -233,7 +236,7 @@ class MainActivity : Activity() {
             .setTitle("Aktivitas belum selesai")
             .setMessage("Ada perjalanan yang belum disimpan karena aplikasi sempat tertutup. Lanjutkan?")
             .setPositiveButton("Lanjutkan") { _, _ ->
-                if (TrackerState.restore(this)) { trackPage = 1; showTracking() } else TrackerState.clearSaved(this)
+                if (TrackerState.restore(this)) { trackPage = 0; mulaiScreen = true; showTracking() } else TrackerState.clearSaved(this)
             }
             .setNegativeButton("Buang") { _, _ -> TrackerState.clearSaved(this) }
             .setCancelable(false)
@@ -323,7 +326,7 @@ class MainActivity : Activity() {
             background = box(t.surface, 0)
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
-        listOf("⌂" to "Beranda", "⌖" to "Routes", "▤" to "Riwayat", "⚙" to "Atur")
+        listOf("⌂" to "Beranda", "⌖" to "Routes", "▶" to "Mulai", "▤" to "Riwayat", "⚙" to "Atur")
             .forEachIndexed { i, (ic, label) ->
                 val c = if (i == sel) t.accent else t.muted
                 val cell = LinearLayout(this).apply {
@@ -331,10 +334,17 @@ class MainActivity : Activity() {
                     gravity = Gravity.CENTER
                     setPadding(0, dp(6), 0, dp(6))
                     setOnClickListener {
-                        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showHistory(); else -> showSettings() }
+                        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showMulai(); 3 -> showHistory(); else -> showSettings() }
                     }
                 }
-                cell.addView(tv(ic, 20f, c, true).apply { gravity = Gravity.CENTER })
+                if (i == 2) {
+                    cell.addView(tv(ic, 16f, onColor(t.accent), true).apply {
+                        gravity = Gravity.CENTER
+                        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (i == sel) t.accent else t.muted) }
+                    }, LinearLayout.LayoutParams(dp(34), dp(34)))
+                } else {
+                    cell.addView(tv(ic, 20f, c, true).apply { gravity = Gravity.CENTER })
+                }
                 cell.addView(tv(label, 10f, c, i == sel).apply { gravity = Gravity.CENTER })
                 bar.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
             }
@@ -487,6 +497,13 @@ class MainActivity : Activity() {
     /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
     /** Beranda, Utama, Rute, dan Grafik kini satu layar yang digeser, baik sedang merekam maupun tidak. */
     private fun showHome() {
+        mulaiScreen = false
+        showTracking()
+    }
+
+    /** Menu Mulai (tengah): Utama, Rute, Grafik yang bisa digeser, plus tombol mulai/selesai. */
+    private fun showMulai() {
+        mulaiScreen = true
         showTracking()
     }
 
@@ -588,9 +605,9 @@ class MainActivity : Activity() {
             val live = card(t.surface, 14, 18)
             live.addView(tv("● AKTIVITAS SEDANG BERJALAN", 11f, a, true))
             live.add(tv(if (paused) "Dijeda • tekan LANJUT di bawah untuk meneruskan"
-                else "Merekam • geser ke Utama, Rute, atau Grafik", 13f, t.text), 4)
+                else "Merekam • buka menu Mulai untuk Utama, Rute, atau Grafik", 13f, t.text), 4)
             r.add(live, 10)
-            r.add(btn("→   LIHAT AKTIVITAS", a, 30) { goTrackPage(1) }, 10, 0f, dp(54))
+            r.add(btn("→   LIHAT AKTIVITAS", a, 30) { goTrackPage(0) }, 10, 0f, dp(54))
         } else {
             r.add(stepper("◎ Target hari ini", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
                 { Themes.stepTarget(this, m, -1); showHome() },
@@ -652,7 +669,8 @@ class MainActivity : Activity() {
     private fun startTracking(m: String = mode) {
         if (running) return
         mode = m
-        trackPage = 1
+        trackPage = 0
+        mulaiScreen = true
         if (!hasFine()) {
             pendingResume = false
             askPermissions()
@@ -1113,7 +1131,7 @@ class MainActivity : Activity() {
             v.paint.isUnderlineText = selected
         }
         val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf("Beranda", "Utama", "Rute", "Grafik").forEachIndexed { i, name ->
+        listOf("Utama", "Rute", "Grafik").forEachIndexed { i, name ->
             val v = tv(name, 13f, t.muted).apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(9), dp(10), dp(9), dp(6))
@@ -1123,26 +1141,33 @@ class MainActivity : Activity() {
             tabViews.add(v)
             tabRow.addView(v)
         }
-        header.add(tabRow, 4)
+        if (mulaiScreen) header.add(tabRow, 4)
 
-        pager = PagerScroll(this, w) { p ->
-            trackPage = p
-            tabViews.forEachIndexed { i, v -> styleTab(v, i == p) }
+        if (trackPage > 2) trackPage = 0
+        val content: View
+        if (mulaiScreen) {
+            pager = PagerScroll(this, w) { p ->
+                trackPage = p
+                tabViews.forEachIndexed { i, v -> styleTab(v, i == p) }
+            }
+            val main = column()
+            when (m) {
+                "Lari" -> buildRunBody(main, a)
+                "Jalan" -> buildWalkBody(main, a)
+                else -> buildBikeBody(main, a)
+            }
+            pager.pages = 3
+            goTrackPage = { p -> pager.goTo(p, true) }
+            val strip = LinearLayout(this)
+            strip.addView(trackScroll(main), LinearLayout.LayoutParams(w, -1))
+            strip.addView(trackScroll(buildRoutePage(a)), LinearLayout.LayoutParams(w, -1))
+            strip.addView(trackScroll(buildChartPage(m, a)), LinearLayout.LayoutParams(w, -1))
+            pager.addView(strip)
+            content = pager
+        } else {
+            goTrackPage = { p -> mulaiScreen = true; trackPage = p; showTracking() }
+            content = homePageView(m)
         }
-        val main = column()
-        when (m) {
-            "Lari" -> buildRunBody(main, a)
-            "Jalan" -> buildWalkBody(main, a)
-            else -> buildBikeBody(main, a)
-        }
-        pager.pages = 4
-        goTrackPage = { p -> pager.goTo(p, true) }
-        val strip = LinearLayout(this)
-        strip.addView(homePageView(m), LinearLayout.LayoutParams(w, -1))
-        strip.addView(trackScroll(main), LinearLayout.LayoutParams(w, -1))
-        strip.addView(trackScroll(buildRoutePage(a)), LinearLayout.LayoutParams(w, -1))
-        strip.addView(trackScroll(buildChartPage(m, a)), LinearLayout.LayoutParams(w, -1))
-        pager.addView(strip)
 
         val row = LinearLayout(this).apply {
             setPadding(dp(16), dp(8), dp(16), dp(8))
@@ -1166,12 +1191,12 @@ class MainActivity : Activity() {
             }
         }
         outer.addView(header)
-        outer.addView(pager, LinearLayout.LayoutParams(-1, 0, 1f))
+        outer.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         outer.addView(row)
-        outer.addView(navBar(0))
+        outer.addView(navBar(if (mulaiScreen) 2 else 0))
         setContentView(outer)
         outer.requestApplyInsets()
-        pager.post { pager.goTo(trackPage, false) }
+        if (mulaiScreen) pager.post { pager.goTo(trackPage, false) }
         refreshTracking()
         if (!running) startIdleGps()
     }
@@ -1353,8 +1378,8 @@ class MainActivity : Activity() {
     private fun calories(): Int = TrackerState.calories(Themes.weight(this))
 
     private fun refreshTracking() {
-        if (distanceText == null) return
         gpsText?.text = gpsStatus
+        if (distanceText == null) return
         val km = distanceMeters / 1000f
         val target = TrackerState.target
         val frac = (TrackerState.progressValue() / target).coerceIn(0f, 1f)
@@ -1701,7 +1726,7 @@ class MainActivity : Activity() {
                 }
             }, 10, 0f, dp(48))
         }
-        show(2, r)
+        show(3, r)
     }
 
     private fun showDetail(idx: Int, rec: Rec) {
@@ -1798,7 +1823,7 @@ class MainActivity : Activity() {
             }
         }, 10, 0f, dp(48))
 
-        show(2, r)
+        show(3, r)
         inDetail = true
     }
 
@@ -1855,7 +1880,7 @@ class MainActivity : Activity() {
         r.add(tv("RideTrack Pro • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
             gravity = Gravity.CENTER
         }, 20)
-        show(3, r)
+        show(4, r)
     }
 
     // ---------- Cadangan riwayat dan pengaturan baterai ----------
@@ -1936,6 +1961,7 @@ class MainActivity : Activity() {
         when {
             running -> moveTaskToBack(true)
             inDetail -> showHistory()
+            currentTab == -1 && mulaiScreen -> showHome()
             currentTab > 0 -> showHome()
             else -> super.onBackPressed()
         }
