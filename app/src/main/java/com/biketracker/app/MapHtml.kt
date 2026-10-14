@@ -36,6 +36,7 @@ object MapHtml {
                 .wp { width: 26px; height: 26px; border-radius: 50%; background: #FFB020; color: #111;
                       font: 700 13px sans-serif; display: flex; align-items: center; justify-content: center;
                       border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); box-sizing: border-box; }
+                body.nowp .wpi { display: none; }
                 .rb { position: absolute; right: 10px; width: 34px; height: 34px; border-radius: 50%;
                       background: rgba(20,28,36,0.92); color: #fff; z-index: 1000; display: none;
                       align-items: center; justify-content: center; font: 700 14px sans-serif;
@@ -53,6 +54,7 @@ object MapHtml {
                 var ACCENT = '$accentHex';
                 var rotOk = false, headingMode = false, compactMap = false;
 
+                function setWpHidden(b) { document.body.className = b ? 'nowp' : ''; }
                 function cmpEl() { return document.getElementById('cmp'); }
                 function hdEl() { return document.getElementById('hd'); }
                 function setCmpTop(px) { cmpEl().style.top = px + 'px'; hdEl().style.top = (px + 40) + 'px'; }
@@ -294,7 +296,7 @@ object MapHtml {
                   plan.wps.forEach(function (p, i) {
                     var m = L.marker(p, {
                       draggable: plan.on,
-                      icon: L.divIcon({ className: '', html: '<div class="wp" style="' + (plan.wps.length > 1 && i === 0 ? 'background:#27D282;' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'background:#FF3B3B;color:#fff;' : '')) + '">' + (plan.wps.length > 1 && i === 0 ? 'A' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'B' : (i + 1))) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
+                      icon: L.divIcon({ className: 'wpi', html: '<div class="wp" style="' + (plan.wps.length > 1 && i === 0 ? 'background:#27D282;' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'background:#FF3B3B;color:#fff;' : '')) + '">' + (plan.wps.length > 1 && i === 0 ? 'A' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'B' : (i + 1))) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
                     }).addTo(map);
                     m.on('dragend', function (ev) { var q = ev.target.getLatLng(); plan.wps[i] = [q.lat, q.lng]; recompute(); });
                     plan.mk.push(m);
