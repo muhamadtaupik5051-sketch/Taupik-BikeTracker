@@ -11,8 +11,8 @@ android {
         applicationId 'com.biketracker.app'
         minSdk 23
         targetSdk 35
-        versionCode 36
-        versionName '3.33'
+        versionCode 37
+        versionName '3.34'
     }
 
     compileOptions {
