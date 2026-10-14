@@ -46,6 +46,7 @@ class MapPanel(
     private var failed = false
     private var satellite = false
     private var sent = 0
+    private var wpHidden = false
     private var pending: List<DoubleArray> = emptyList()
     private var planBtn: TextView? = null
     private var planBar: LinearLayout? = null
@@ -594,6 +595,11 @@ class MapPanel(
 
     private fun flush() {
         val r = pending
+        val hide = TrackerState.running && !survey
+        if (hide != wpHidden) {
+            wpHidden = hide
+            web.evaluateJavascript("setWpHidden($hide)", null)
+        }
         if (r.size < sent) {
             sent = 0
             web.evaluateJavascript("route.setLatLngs([])", null)
