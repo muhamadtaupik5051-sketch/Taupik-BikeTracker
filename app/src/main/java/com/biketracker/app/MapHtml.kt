@@ -36,14 +36,63 @@ object MapHtml {
                 .wp { width: 26px; height: 26px; border-radius: 50%; background: #FFB020; color: #111;
                       font: 700 13px sans-serif; display: flex; align-items: center; justify-content: center;
                       border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); box-sizing: border-box; }
+                .rb { position: absolute; right: 10px; width: 34px; height: 34px; border-radius: 50%;
+                      background: rgba(20,28,36,0.92); color: #fff; z-index: 1000; display: none;
+                      align-items: center; justify-content: center; font: 700 14px sans-serif;
+                      box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
+                .rb.on { background: #1E90FF; }
               </style>
             </head>
             <body>
               <div id="map"></div>
+              <div id="cmp" class="rb" style="top:56px"><svg id="cmpA" width="22" height="22" viewBox="0 0 22 22"><path d="M11 2 L16 12 L11 10 L6 12 Z" fill="#FF3B3B"/><path d="M11 20 L16 12 L11 10 L6 12 Z" fill="#E6EDF3"/></svg></div>
+              <div id="hd" class="rb" style="top:96px">&#10148;</div>
               <script>
                 var map = null, route = null, marker = null, startPin = null, endPin = null;
                 var osm = null, sat = null, follow = true;
                 var ACCENT = '$accentHex';
+                var rotOk = false, headingMode = false, compactMap = false;
+
+                function cmpEl() { return document.getElementById('cmp'); }
+                function hdEl() { return document.getElementById('hd'); }
+                function setCmpTop(px) { cmpEl().style.top = px + 'px'; hdEl().style.top = (px + 40) + 'px'; }
+                function updateCmp() {
+                  if (!map || !rotOk || !map.getBearing) return;
+                  document.getElementById('cmpA').style.transform = 'rotate(' + (-map.getBearing()) + 'deg)';
+                }
+                function initRotateUi() {
+                  if (!rotOk || compactMap) return;
+                  cmpEl().style.display = 'flex';
+                  hdEl().style.display = 'flex';
+                  cmpEl().onclick = function () {
+                    headingMode = false; hdEl().className = 'rb';
+                    if (map.setBearing) map.setBearing(0);
+                    updateCmp();
+                  };
+                  hdEl().onclick = function () {
+                    headingMode = !headingMode;
+                    hdEl().className = headingMode ? 'rb on' : 'rb';
+                    if (headingMode) { follow = true; if (lastHeading !== null) map.setBearing(lastHeading); }
+                  };
+                  setInterval(updateCmp, 300);
+                }
+                var lastHeading = null;
+                function bearingOf(a, b) {
+                  var r = Math.PI / 180, y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+                  var x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+                  return (Math.atan2(y, x) / r + 360) % 360;
+                }
+                function noteMove(prev, cur) {
+                  if (!prev || !map) return;
+                  if (map.distance(prev, cur) < 4) return;
+                  var b = bearingOf(prev, cur);
+                  if (lastHeading !== null) {
+                    var d = ((b - lastHeading + 540) % 360) - 180;
+                    b = (lastHeading + d * 0.5 + 360) % 360;
+                  }
+                  lastHeading = b;
+                  if (headingMode && rotOk && map.setBearing) map.setBearing(b);
+                }
 
                 function dotStyle(color) {
                   return { radius: 8, color: '#ffffff', weight: 3, fillColor: color, fillOpacity: 1 };
@@ -59,7 +108,11 @@ object MapHtml {
                 }
 
                 function initMap() {
-                  map = L.map('map', { zoomControl: false }).setView([-2.5, 118], 5);
+                  var opts = { zoomControl: false };
+                  if (rotOk) { opts.rotate = true; opts.touchRotate = true; opts.bearing = 0; opts.rotateControl = false; }
+                  try { map = L.map('map', opts); }
+                  catch (e) { rotOk = false; map = L.map('map', { zoomControl: false }); }
+                  map.setView([-2.5, 118], 5);
                   osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19,
                     attribution: '&copy; OpenStreetMap contributors'
@@ -71,6 +124,7 @@ object MapHtml {
                   map.on('dragstart', function () { follow = false; });
                   route = L.polyline([], { color: ACCENT, weight: 5 }).addTo(map);
                   planInit();
+                  initRotateUi();
                   Bridge.onReady();
                 }
 
@@ -82,8 +136,22 @@ object MapHtml {
                   document.head.appendChild(css);
                   var s = document.createElement('script');
                   s.src = bases[i] + 'leaflet.js';
-                  s.onload = initMap;
+                  s.onload = function () { loadRotate(0); };
                   s.onerror = function () { loadLeaflet(bases, i + 1); };
+                  document.head.appendChild(s);
+                }
+
+                // Plugin putar peta (dua jari). Kalau gagal dimuat, peta tetap jalan tanpa putar.
+                var ROT = [
+                  'https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js',
+                  'https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js'
+                ];
+                function loadRotate(i) {
+                  if (i >= ROT.length) { rotOk = false; initMap(); return; }
+                  var s = document.createElement('script');
+                  s.src = ROT[i];
+                  s.onload = function () { rotOk = true; initMap(); };
+                  s.onerror = function () { loadRotate(i + 1); };
                   document.head.appendChild(s);
                 }
 
@@ -112,6 +180,7 @@ object MapHtml {
                 function addPoints(arr) {
                   if (!map || arr.length === 0) return;
                   var first = route.getLatLngs().length === 0;
+                  var prevPos = marker ? marker.getLatLng() : null;
                   for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); }
                   var last = arr[arr.length - 1];
                   if (first) { startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map); }
@@ -120,6 +189,7 @@ object MapHtml {
                     map.setView(last, 17);
                   } else {
                     marker.setLatLng(last);
+                    noteMove(prevPos, marker.getLatLng());
                     if (follow) map.panTo(last);
                   }
                 }
@@ -151,6 +221,9 @@ object MapHtml {
                   if (!map) return;
                   map.dragging.disable(); map.touchZoom.disable(); map.doubleClickZoom.disable();
                   map.scrollWheelZoom.disable(); map.boxZoom.disable(); map.keyboard.disable();
+                  compactMap = true;
+                  if (map.touchRotate) map.touchRotate.disable();
+                  cmpEl().style.display = 'none'; hdEl().style.display = 'none';
                 }
 
                 // ---- Rencana rute manual: ketuk peta untuk menambah titik yang akan dilewati ----
@@ -284,7 +357,7 @@ object MapHtml {
                   if (!map) return;
                   var p = [lat, lon];
                   if (!marker) { marker = L.circleMarker(p, dotStyle(ACCENT)).addTo(map); }
-                  else { marker.setLatLng(p); }
+                  else { var pv = marker.getLatLng(); marker.setLatLng(p); noteMove(pv, marker.getLatLng()); }
                   if (first) { map.setView(p, 17); } else if (follow) { map.panTo(p); }
                 }
               </script>
