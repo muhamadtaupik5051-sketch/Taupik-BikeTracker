@@ -420,7 +420,7 @@ class MapPanel(
     private fun guideDialog() {
         val plans = loadPlans()
         if (plans.isEmpty()) {
-            Toast.makeText(context, "Belum ada rute. Buat dulu di halaman Survei (✎) lalu Simpan.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Belum ada rute. Buat dulu di menu Routes lalu Simpan rute.", Toast.LENGTH_LONG).show()
             return
         }
         val names = ArrayList<String>()
@@ -431,9 +431,11 @@ class MapPanel(
             .setItems(names.toTypedArray()) { _, i ->
                 if (i == 0) {
                     prefs().edit().putString("active_plan", "").apply()
+                    if (TrackerState.running) TrackerState.loadGuide(context)
                     if (ready) web.evaluateJavascript("loadPlan([],true,'bike',false)", null)
                 } else {
                     prefs().edit().putString("active_plan", plans[i - 1][0]).apply()
+                    if (TrackerState.running) TrackerState.loadGuide(context)
                     loadPlanOnMap(plans[i - 1], true)
                 }
             }
