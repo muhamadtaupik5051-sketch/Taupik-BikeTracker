@@ -1735,6 +1735,10 @@ class MainActivity : Activity() {
 
         r.add(tv("PERINGATAN KELUAR RUTE", 11f, t.muted, true), 20)
         val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
+        val routeOn = ap.getBoolean("alert_route", true)
+        r.add(btn("Peringatan keluar rute: " + (if (routeOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_route", !routeOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
         val vibOn = ap.getBoolean("alert_vibe", true)
         r.add(btn("Getar peringatan: " + (if (vibOn) "AKTIF" else "MATI"), t.surface) {
             ap.edit().putBoolean("alert_vibe", !vibOn).apply(); showSettings()
