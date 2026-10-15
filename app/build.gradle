@@ -11,8 +11,28 @@ android {
         applicationId 'com.biketracker.app'
         minSdk 23
         targetSdk 35
-        versionCode 39
-        versionName '3.36'
+        versionCode 41
+        versionName '3.38'
+    }
+
+
+    // Tanda tangan tetap (opsional): aktif hanya kalau KEYSTORE_FILE diisi oleh workflow.
+    // Tanpa itu, build memakai kunci debug bawaan seperti sebelumnya.
+    def ksPath = System.getenv('KEYSTORE_FILE')
+    if (ksPath && file(ksPath).exists()) {
+        signingConfigs {
+            fixed {
+                storeFile file(ksPath)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD')
+            }
+        }
+        buildTypes {
+            debug {
+                signingConfig signingConfigs.fixed
+            }
+        }
     }
 
     compileOptions {
