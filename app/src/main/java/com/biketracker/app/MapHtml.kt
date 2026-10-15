@@ -42,6 +42,13 @@ object MapHtml {
                       align-items: center; justify-content: center; font: 700 14px sans-serif;
                       box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
                 .rb.on { background: #1E90FF; }
+                .gps { position: relative; width: 28px; height: 28px; }
+                .gps b { position: absolute; left: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%;
+                         background: #1565FF; border: 3px solid #ffffff; box-sizing: border-box;
+                         box-shadow: 0 1px 6px rgba(0,0,0,0.55); }
+                .gps i { position: absolute; left: 0; top: 0; width: 28px; height: 28px; border-radius: 50%;
+                         background: rgba(0,229,255,0.45); animation: gpsPulse 1.8s ease-out infinite; }
+                @keyframes gpsPulse { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.4); opacity: 0; } }
               </style>
             </head>
             <body>
@@ -49,9 +56,10 @@ object MapHtml {
               <div id="cmp" class="rb" style="top:56px"><svg id="cmpA" width="22" height="22" viewBox="0 0 22 22"><path d="M11 2 L16 12 L11 10 L6 12 Z" fill="#FF3B3B"/><path d="M11 20 L16 12 L11 10 L6 12 Z" fill="#E6EDF3"/></svg></div>
               <div id="hd" class="rb" style="top:96px">&#10148;</div>
               <script>
-                var map = null, route = null, marker = null, startPin = null, endPin = null;
+                var map = null, route = null, routeCase = null, marker = null, startPin = null, endPin = null;
                 var osm = null, sat = null, follow = true;
                 var ACCENT = '$accentHex';
+                var ROUTE_COLOR = '#00E5FF';
                 var rotOk = false, headingMode = false, compactMap = false;
 
                 function setWpHidden(b) { document.body.className = b ? 'nowp' : ''; }
@@ -96,6 +104,13 @@ object MapHtml {
                   if (headingMode && rotOk && map.setBearing) map.setBearing(b);
                 }
 
+                function gpsMarker(p) {
+                  return L.marker(p, {
+                    icon: L.divIcon({ className: '', html: '<div class="gps"><i></i><b></b></div>', iconSize: [28, 28], iconAnchor: [14, 14] }),
+                    zIndexOffset: 1000, interactive: false
+                  });
+                }
+
                 function dotStyle(color) {
                   return { radius: 8, color: '#ffffff', weight: 3, fillColor: color, fillOpacity: 1 };
                 }
@@ -124,7 +139,8 @@ object MapHtml {
                     attribution: 'Tiles &copy; Esri'
                   });
                   map.on('dragstart', function () { follow = false; });
-                  route = L.polyline([], { color: ACCENT, weight: 5 }).addTo(map);
+                  routeCase = L.polyline([], { color: '#03222B', weight: 11, opacity: 0.6, lineJoin: 'round', lineCap: 'round' }).addTo(map);
+                  route = L.polyline([], { color: ROUTE_COLOR, weight: 6, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(map);
                   planInit();
                   initRotateUi();
                   Bridge.onReady();
@@ -183,11 +199,11 @@ object MapHtml {
                   if (!map || arr.length === 0) return;
                   var first = route.getLatLngs().length === 0;
                   var prevPos = marker ? marker.getLatLng() : null;
-                  for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); }
+                  for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); routeCase.addLatLng(arr[i]); }
                   var last = arr[arr.length - 1];
                   if (first) { startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map); }
                   if (!marker) {
-                    marker = L.circleMarker(last, dotStyle(ACCENT)).addTo(map);
+                    marker = gpsMarker(last).addTo(map);
                     map.setView(last, 17);
                   } else {
                     marker.setLatLng(last);
@@ -200,6 +216,7 @@ object MapHtml {
                 function showRoute(arr) {
                   if (!map || arr.length === 0) return;
                   route.setLatLngs(arr);
+                  routeCase.setLatLngs(arr);
                   startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map);
                   endPin = L.marker(arr[arr.length - 1], { icon: pin('r') }).addTo(map);
                   if (arr.length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
@@ -358,7 +375,7 @@ object MapHtml {
                 function setPosition(lat, lon, first) {
                   if (!map) return;
                   var p = [lat, lon];
-                  if (!marker) { marker = L.circleMarker(p, dotStyle(ACCENT)).addTo(map); }
+                  if (!marker) { marker = gpsMarker(p).addTo(map); }
                   else { var pv = marker.getLatLng(); marker.setLatLng(p); noteMove(pv, marker.getLatLng()); }
                   if (first) { map.setView(p, 17); } else if (follow) { map.panTo(p); }
                 }
