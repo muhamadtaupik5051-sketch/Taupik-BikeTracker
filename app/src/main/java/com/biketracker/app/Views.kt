@@ -454,3 +454,131 @@ class ChartView(ctx: Context, private val t: AppTheme, var accent: Int) : View(c
         c.drawCircle(px[n - 1], py[n - 1], 4f * d, dot)
     }
 }
+
+
+/**
+ * Grafik mingguan: garis cyan halus per hari (Senin sampai hari ini), garis putus target,
+ * dan penanda hijau pada hari yang mencapai target. Nilai berasal dari riwayat nyata.
+ */
+class WeekChartView(ctx: Context, private val t: AppTheme) : View(ctx) {
+    var values: List<Float> = List(7) { 0f }
+    var todayIndex = 0
+    var target = 0f
+    var steps = false
+    var names: List<String> = listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min")
+
+    private val d = resources.displayMetrics.density
+    private val cyan get() = if (t.dark) 0xFF00E5FF.toInt() else 0xFF00A8C6.toInt()
+    private val tgtColor = 0xFFFFB020.toInt()
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(3f * d, 4f * d), 0f)
+    }
+    private val tgtLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(8f * d, 5f * d), 0f)
+    }
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val txt = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+    private val area = Path()
+
+    private fun fmt(v: Float) = if (steps) Fmt.int(v.roundToInt()) else Fmt.dec(v, 1)
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val x0 = 6f * d
+        val x1 = w - 6f * d
+        val y0 = 26f * d
+        val y1 = h - 24f * d
+        val shown = min(max(todayIndex, 0), 6) + 1
+        val vals = List(shown) { values.getOrElse(it) { 0f } }
+        val top = max(max(vals.maxOrNull() ?: 0f, target) * 1.2f, 1f)
+        fun xAt(i: Int) = x0 + (x1 - x0) * (i + 0.5f) / 7f
+        fun yAt(v: Float) = y1 - (y1 - y0) * (v / top).coerceIn(0f, 1f)
+
+        // garis bantu
+        grid.color = t.surface2
+        grid.strokeWidth = 1f * d
+        for (i in 1..3) {
+            val y = y1 - (y1 - y0) * i / 3f
+            c.drawLine(x0, y, x1, y, grid)
+        }
+        grid.pathEffect = null
+        grid.color = t.muted
+        c.drawLine(x0, y1, x1, y1, grid)
+        grid.pathEffect = DashPathEffect(floatArrayOf(3f * d, 4f * d), 0f)
+
+        // garis target jarak
+        if (target > 0f) {
+            val ty = yAt(target)
+            tgtLine.color = tgtColor
+            tgtLine.strokeWidth = 1.5f * d
+            c.drawLine(x0, ty, x1, ty, tgtLine)
+            txt.color = tgtColor
+            txt.textSize = 10f * d
+            txt.typeface = Typeface.DEFAULT_BOLD
+            txt.textAlign = Paint.Align.RIGHT
+            c.drawText("Target " + fmt(target) + (if (steps) " langkah" else " km"), x1, ty - 5f * d, txt)
+        }
+
+        // nama hari
+        txt.textSize = 11f * d
+        txt.textAlign = Paint.Align.CENTER
+        for (i in 0..6) {
+            val isToday = i == todayIndex
+            txt.color = if (isToday) cyan else t.muted
+            txt.typeface = if (isToday) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            c.drawText(names[i], xAt(i), h - 6f * d, txt)
+        }
+
+        // kurva cyan + area gradasi
+        val n = shown
+        val px = FloatArray(n) { xAt(it) }
+        val py = FloatArray(n) { yAt(vals[it]) }
+        if (n >= 2) {
+            path.reset()
+            path.moveTo(px[0], py[0])
+            for (k in 1 until n) {
+                val mx = (px[k - 1] + px[k]) / 2f
+                path.cubicTo(mx, py[k - 1], mx, py[k], px[k], py[k])
+            }
+            area.set(path)
+            area.lineTo(px[n - 1], y1)
+            area.lineTo(px[0], y1)
+            area.close()
+            val rgb = cyan and 0x00FFFFFF
+            fill.shader = LinearGradient(0f, y0, 0f, y1, rgb or 0x66000000, rgb or 0x05000000, Shader.TileMode.CLAMP)
+            c.drawPath(area, fill)
+            line.color = cyan
+            line.strokeWidth = 3f * d
+            c.drawPath(path, line)
+        }
+
+        // titik per hari + angka
+        txt.textSize = 9.5f * d
+        for (k in 0 until n) {
+            val v = vals[k]
+            val isToday = k == todayIndex
+            val reached = target > 0f && v >= target
+            if (v <= 0f && !isToday) continue
+            dot.color = t.surface
+            c.drawCircle(px[k], py[k], (if (isToday) 7f else 5.5f) * d, dot)
+            dot.color = if (reached) t.good else cyan
+            c.drawCircle(px[k], py[k], (if (isToday) 5f else 3.8f) * d, dot)
+            if (v > 0f) {
+                txt.color = if (reached) t.good else t.text
+                txt.typeface = if (isToday) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                txt.textAlign = Paint.Align.CENTER
+                c.drawText(fmt(v), px[k], py[k] - 10f * d, txt)
+            }
+        }
+    }
+}
