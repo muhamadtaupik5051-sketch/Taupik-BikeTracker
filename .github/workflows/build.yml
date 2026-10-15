@@ -1,4 +1,4 @@
-name: Build RideTrack Pro V3.26 APK
+name: Build RideTrack Pro V3 APK
 
 on:
   workflow_dispatch:
@@ -36,7 +36,23 @@ jobs:
           find . -maxdepth 4 -type f | sort
 
       
+      - name: Siapkan keystore tetap (jika ada secret)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/ride.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/ride.jks" >> "$GITHUB_ENV"
+            echo "Keystore tetap dipakai"
+          else
+            echo "Secret KEYSTORE_BASE64 kosong, memakai kunci debug bawaan"
+          fi
+
       - name: Build APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
           gradle assembleDebug --stacktrace --info --console=plain 2>&1 | tee build.log
@@ -46,7 +62,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: RideTrack-Pro-V3.26-APK
+          name: RideTrack-Pro-V3-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
