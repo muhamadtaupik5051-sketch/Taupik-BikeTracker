@@ -419,6 +419,21 @@ class MainActivity : Activity() {
         prefs.edit().putString("records", list.joinToString("\n")).apply()
     }
 
+    /** Jumlah hari berturut-turut ada aktivitas untuk mode ini, dihitung mundur dari hari ini (atau kemarin). */
+    private fun streakDays(m: String): Int {
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val days = HashSet<String>()
+        for (line in rawRecords()) {
+            val r = parse(line) ?: continue
+            if (r.mode == m && r.date.length >= 10) days.add(r.date.substring(0, 10))
+        }
+        val cal = Calendar.getInstance()
+        if (!days.contains(fmt.format(cal.time))) cal.add(Calendar.DAY_OF_YEAR, -1)
+        var n = 0
+        while (days.contains(fmt.format(cal.time))) { n++; cal.add(Calendar.DAY_OF_YEAR, -1) }
+        return n
+    }
+
     private fun weekData(m: String): Pair<FloatArray, List<Rec>> {
         val out = FloatArray(7)
         val week = mutableListOf<Rec>()
@@ -555,24 +570,44 @@ class MainActivity : Activity() {
         top.addView(tv(countText, 11f, t.muted).apply { gravity = Gravity.END })
         wc.addView(top)
 
-        val maxV = maxOf(week.maxOrNull() ?: 0f, 1f)
         val today = (Calendar.getInstance().get(Calendar.DAY_OF_WEEK) + 5) % 7
         val dayNames = listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min")
-        val bars = LinearLayout(this)
-        for (i in 0..6) {
-            val col = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            }
-            val h = if (week[i] > 0f) maxOf(dp(4), (week[i] / maxV * dp(44)).toInt()) else dp(3)
-            val barColor = if (i == today) a else if (week[i] > 0f) dim(a) else t.surface2
-            col.addView(View(this).apply { background = box(barColor, 4) }, LinearLayout.LayoutParams(-1, h))
-            col.addView(tv(dayNames[i], 11f, if (i == today) a else t.muted).apply {
-                gravity = Gravity.CENTER
-            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
-            bars.addView(col, LinearLayout.LayoutParams(0, dp(68), 1f).apply { if (i > 0) leftMargin = dp(6) })
+        val wk = WeekChartView(this, t).apply {
+            values = week.toList()
+            todayIndex = today
+            target = tgt
+            steps = m == "Jalan"
+            names = dayNames
         }
-        wc.add(bars, 10)
+        wc.add(wk, 10, 0f, dp(190))
+
+        // Ringkasan pencapaian dari riwayat nyata
+        fun fv(v: Float) = if (m == "Jalan") Fmt.int(v.roundToInt()) else Fmt.dec(v, 1) + " km"
+        val hit = (0..today).count { week[it] >= tgt }
+        val active = (0..today).count { week[it] > 0f }
+        var bestI = -1
+        for (i in 0..today) if (week[i] > 0f && (bestI < 0 || week[i] > week[bestI])) bestI = i
+        val avgActive = if (active > 0) week.sum() / active else 0f
+        val sumRow = LinearLayout(this)
+        fun mini(k: String, v: String, col: Int, first: Boolean) {
+            val box1 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            box1.addView(tv(k, 10.5f, t.muted))
+            box1.addView(mono(tv(v, 14f, col, true)), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+            sumRow.addView(box1, LinearLayout.LayoutParams(0, -2, 1f).apply { if (!first) leftMargin = dp(8) })
+        }
+        mini("Target tercapai", "$hit dari ${today + 1} hari", if (hit > 0) t.good else t.text, true)
+        mini("Hari terbaik", if (bestI >= 0) dayNames[bestI] + " · " + fv(week[bestI]) else "-", a, false)
+        mini("Rata-rata/hari aktif", if (active > 0) fv(avgActive) else "-", t.text, false)
+        wc.add(sumRow, 12)
+        val streak = streakDays(m)
+        val msg = when {
+            hit > 0 && streak >= 2 -> "★ $hit hari mencapai target minggu ini · beruntun $streak hari"
+            hit > 0 -> "★ $hit hari mencapai target minggu ini"
+            streak >= 2 -> "Beruntun $streak hari, terus pertahankan!"
+            active > 0 -> "Belum ada hari yang mencapai target minggu ini"
+            else -> "Belum ada aktivitas minggu ini, ayo mulai!"
+        }
+        wc.add(tv(msg, 12f, if (hit > 0) t.good else t.muted, hit > 0), 10)
         r.add(wc, 10)
 
         val totalKm = recs.sumOf { it.km.toDouble() }.toFloat()
@@ -669,7 +704,7 @@ class MainActivity : Activity() {
     private fun startTracking(m: String = mode) {
         if (running) return
         mode = m
-        trackPage = 0
+        trackPage = 1
         mulaiScreen = true
         if (!hasFine()) {
             pendingResume = false
@@ -819,7 +854,7 @@ class MainActivity : Activity() {
             digital = true
         }
         routeGauge = g
-        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
+        top.addView(g, LinearLayout.LayoutParams(dp(124), -2))
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this)
@@ -871,7 +906,7 @@ class MainActivity : Activity() {
         col.add(banner, 6)
 
         val mp = MapPanel(this, t, a)
-        mp.minimumHeight = dp(260)
+        mp.minimumHeight = dp(400)
         trackMap = mp
         col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
         return col
