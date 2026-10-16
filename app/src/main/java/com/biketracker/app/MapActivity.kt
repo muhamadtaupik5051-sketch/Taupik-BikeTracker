@@ -207,42 +207,7 @@ class MapActivity : Activity() {
         finish()
     }
 
-    private fun bottomNav(): View {
-        val bar = LinearLayout(this).apply {
-            setBackgroundColor(t.surface)
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
-        listOf("⌂" to "Beranda", "⌖" to "Routes", "▶" to "Mulai", "▤" to "Riwayat", "⚙" to "Atur")
-            .forEachIndexed { i, (ic, label) ->
-                val sel = i == 1
-                val c = if (sel) t.accent else t.muted
-                val cell = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(6), 0, dp(6))
-                    setOnClickListener { if (i != 1) goTab(i) }
-                }
-                if (i == 2) {
-                    cell.addView(TextView(this).apply {
-                        text = ic; textSize = 16f; setTextColor(onColor(t.accent)); typeface = Typeface.DEFAULT_BOLD
-                        gravity = Gravity.CENTER
-                        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.muted) }
-                    }, LinearLayout.LayoutParams(dp(34), dp(34)))
-                } else {
-                    cell.addView(TextView(this).apply {
-                        text = ic; textSize = 20f; setTextColor(c); typeface = Typeface.DEFAULT_BOLD
-                        gravity = Gravity.CENTER
-                    })
-                }
-                cell.addView(TextView(this).apply {
-                    text = label; textSize = 10f; setTextColor(c)
-                    typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                    gravity = Gravity.CENTER
-                })
-                bar.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
-            }
-        return bar
-    }
+    private fun bottomNav(): View = buildNavBar(this, t, 1) { i -> if (i != 1) goTab(i) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -289,7 +254,7 @@ class MapActivity : Activity() {
             setOnClickListener { finish() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(TextView(this).apply {
-            text = if (viewRoute != null) "Rute Aktivitas" else "Routes"
+            text = if (viewRoute != null) "Rute Aktivitas" else "Rute"
             textSize = 18f
             setTextColor(t.text)
             typeface = Typeface.DEFAULT_BOLD
