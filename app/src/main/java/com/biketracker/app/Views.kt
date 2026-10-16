@@ -10,6 +10,10 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.view.MotionEvent
 import android.view.View
 import android.widget.HorizontalScrollView
@@ -581,4 +585,116 @@ class WeekChartView(ctx: Context, private val t: AppTheme) : View(ctx) {
             }
         }
     }
+}
+
+
+/** Ikon navigasi bawah yang digambar sendiri (garis halus, rapi di semua ukuran layar). */
+class NavIconView(ctx: Context, private val kind: Int, private val tint: Int) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = tint
+    }
+    private val path = Path()
+
+    override fun onDraw(c: Canvas) {
+        val s = min(width, height) / 24f
+        path.reset()
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2f * s
+        fun mv(x: Float, y: Float) = path.moveTo(x * s, y * s)
+        fun ln(x: Float, y: Float) = path.lineTo(x * s, y * s)
+        when (kind) {
+            0 -> { // beranda
+                mv(3f, 11f); ln(12f, 3.5f); ln(21f, 11f)
+                mv(5.5f, 9.5f); ln(5.5f, 20f); ln(18.5f, 20f); ln(18.5f, 9.5f)
+                mv(10f, 20f); ln(10f, 14.5f); ln(14f, 14.5f); ln(14f, 20f)
+                c.drawPath(path, p)
+            }
+            1 -> { // rute
+                c.drawCircle(6f * s, 18f * s, 2.6f * s, p)
+                c.drawCircle(18f * s, 6f * s, 2.6f * s, p)
+                mv(6f, 15.4f)
+                path.cubicTo(6f * s, 8f * s, 18f * s, 16f * s, 18f * s, 8.6f * s)
+                c.drawPath(path, p)
+            }
+            2 -> { // mulai
+                p.style = Paint.Style.FILL_AND_STROKE
+                p.strokeWidth = 1.6f * s
+                mv(9f, 6.5f); ln(18f, 12f); ln(9f, 17.5f); path.close()
+                c.drawPath(path, p)
+            }
+            3 -> { // riwayat
+                c.drawCircle(12f * s, 12f * s, 8.5f * s, p)
+                mv(12f, 7f); ln(12f, 12f); ln(15.5f, 14f)
+                c.drawPath(path, p)
+            }
+            else -> { // atur
+                val rows = listOf(6f to 9f, 12f to 15f, 18f to 8f)
+                for ((y, kx) in rows) {
+                    c.drawLine(4f * s, y * s, (kx - 3.2f) * s, y * s, p)
+                    c.drawLine((kx + 3.2f) * s, y * s, 20f * s, y * s, p)
+                    c.drawCircle(kx * s, y * s, 2.2f * s, p)
+                }
+            }
+        }
+    }
+}
+
+/** Bilah navigasi bawah bersama: Beranda, Rute, Mulai (tombol bulat), Riwayat, Atur. */
+fun buildNavBar(ctx: Context, t: AppTheme, sel: Int, onTap: (Int) -> Unit): LinearLayout {
+    val d = ctx.resources.displayMetrics.density
+    fun dp(v: Int) = (v * d).toInt()
+    val root = LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(t.surface)
+    }
+    root.addView(View(ctx).apply { setBackgroundColor(t.surface2) }, LinearLayout.LayoutParams(-1, dp(1)))
+    val row = LinearLayout(ctx).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+    }
+    val labels = listOf("Beranda", "Rute", "Mulai", "Riwayat", "Atur")
+    labels.forEachIndexed { i, label ->
+        val on = i == sel
+        val tint = if (on) t.accent else t.muted
+        val cell = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            isClickable = true
+            setOnClickListener { onTap(i) }
+        }
+        val slot = LinearLayout(ctx).apply { gravity = Gravity.CENTER }
+        cell.addView(slot, LinearLayout.LayoutParams(-1, dp(40)))
+        if (i == 2) {
+            val circle = LinearLayout(ctx).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.accent) }
+            }
+            circle.addView(NavIconView(ctx, 2, onColor(t.accent)), LinearLayout.LayoutParams(dp(22), dp(22)))
+            slot.addView(circle, LinearLayout.LayoutParams(dp(40), dp(40)))
+        } else {
+            val pill = LinearLayout(ctx).apply {
+                gravity = Gravity.CENTER
+                if (on) {
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(15).toFloat()
+                        setColor((t.accent and 0x00FFFFFF) or 0x33000000)
+                    }
+                }
+            }
+            pill.addView(NavIconView(ctx, i, tint), LinearLayout.LayoutParams(dp(24), dp(24)))
+            slot.addView(pill, LinearLayout.LayoutParams(dp(56), dp(30)))
+        }
+        cell.addView(TextView(ctx).apply {
+            text = label
+            textSize = 11f
+            setTextColor(tint)
+            typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        row.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
+    }
+    root.addView(row, LinearLayout.LayoutParams(-1, -2))
+    return root
 }
