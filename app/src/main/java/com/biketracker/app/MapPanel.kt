@@ -153,7 +153,7 @@ class MapPanel(
         MapHtml.applyCache(web)
         web.setBackgroundColor(t.surface)
         web.addJavascriptInterface(Bridge(), "Bridge")
-        web.webViewClient = WebViewClient()
+        web.webViewClient = MapHtml.client(context)
         // Geser di dalam peta menggeser peta; geser dari tepi kiri/kanan tetap pindah halaman.
         web.setOnTouchListener { v, e ->
             if (!compact && e.actionMasked == MotionEvent.ACTION_DOWN) {
