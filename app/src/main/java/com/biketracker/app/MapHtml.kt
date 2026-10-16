@@ -1,398 +1,634 @@
 package com.biketracker.app
 
-/** Halaman HTML Leaflet yang dipakai MapActivity dan panel peta di layar tracking. */
-object MapHtml {
-    /**
-     * Tanpa internet, peta memakai cache bagian yang pernah dibuka (lewat jalur yang sudah dilihat).
-     * Tidak mengunduh peta massal, sesuai aturan penggunaan tile OpenStreetMap.
-     */
-    @Suppress("DEPRECATION")
-    fun applyCache(web: android.webkit.WebView) {
-        var online = true
-        try {
-            val svc = web.context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
-            val cm = svc as android.net.ConnectivityManager
-            val info = cm.activeNetworkInfo
-            online = info != null && info.isConnected
-        } catch (e: Exception) {
-            online = true
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.app.AlertDialog
+import android.content.Intent
+import android.net.Uri
+import android.view.Gravity
+import android.widget.Toast
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewOutlineProvider
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import java.util.Locale
+
+/**
+ * Peta sungguhan (Leaflet) yang ditanam di halaman "Rute" layar tracking:
+ * tab Peta/Satelit, tombol + − ◎, pin Start, dan garis rute yang bertambah langsung.
+ * Butuh internet untuk memuat peta; rute tetap direkam walau peta gagal dimuat.
+ */
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
+class MapPanel(
+    ctx: Context,
+    private val t: AppTheme,
+    private val accent: Int,
+    private val compact: Boolean = false,
+    private val survey: Boolean = false,
+    private val profile: String = "bike"
+) : FrameLayout(ctx) {
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val d = resources.displayMetrics.density
+    private val web = WebView(ctx)
+    private val status: TextView
+    private val tabs = ArrayList<TextView>()
+    private var ready = false
+    private var failed = false
+    private var satellite = false
+    private var sent = 0
+    private var wpHidden = false
+    private var pending: List<DoubleArray> = emptyList()
+    private var planBtn: TextView? = null
+    private var planBar: LinearLayout? = null
+    private var planInfo: TextView? = null
+    private var planRoadBtn: TextView? = null
+    private var planOn = false
+    private var planRoad = true
+    private var planLoop = false
+    private var planGeo = ""
+    private var loopPill: TextView? = null
+    private var planDist = 0.0
+    private var planWps: List<DoubleArray> = emptyList()
+    private var firstPos = true
+
+    inner class Bridge {
+        @JavascriptInterface
+        fun onReady() {
+            handler.post {
+                ready = true
+                status.visibility = View.GONE
+                styleTabs()
+                web.evaluateJavascript("setLayer('${if (satellite) "sat" else "osm"}')", null)
+                if (compact) web.evaluateJavascript("lockMap()", null)
+                flush()
+                if (survey) {
+                    loadActivePlan()
+                    loadSavedMarks()
+                } else if (!compact) {
+                    loadActivePlan()
+                }
+            }
         }
-        web.settings.cacheMode = if (online) android.webkit.WebSettings.LOAD_DEFAULT
-        else android.webkit.WebSettings.LOAD_CACHE_ELSE_NETWORK
+
+        @JavascriptInterface
+        fun onPlan(dist: Double, count: Int, snapped: Boolean, err: Boolean, json: String) {
+            handler.post { onPlanChanged(dist, count, snapped, err, json) }
+        }
+
+        @JavascriptInterface
+        fun onGeo(geo: String) {
+            handler.post { planGeo = geo }
+        }
+
+        @JavascriptInterface
+        fun onLongPress(lat: Double, lon: Double) {
+            handler.post { longPressDialog(lat, lon) }
+        }
+
+        @JavascriptInterface
+        fun onMsg(m: String) {
+            handler.post { Toast.makeText(context, m, Toast.LENGTH_SHORT).show() }
+        }
+
+        @JavascriptInterface
+        fun onFail() {
+            handler.post {
+                failed = true
+                status.text = "Peta butuh internet. Rute tetap direkam."
+                status.visibility = View.VISIBLE
+            }
+        }
     }
 
-    fun build(accentHex: String): String {
-        return """
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <style>
-                html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
-                .pin { width: 26px; height: 26px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
-                       border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); }
-                .pin.g { background: #27D282; }
-                .pin.r { background: #FF3B3B; }
-                .wp { width: 26px; height: 26px; border-radius: 50%; background: #FFB020; color: #111;
-                      font: 700 13px sans-serif; display: flex; align-items: center; justify-content: center;
-                      border: 3px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.45); box-sizing: border-box; }
-                body.nowp .wpi { display: none; }
-                .rb { position: absolute; right: 10px; width: 34px; height: 34px; border-radius: 50%;
-                      background: rgba(20,28,36,0.92); color: #fff; z-index: 1000; display: none;
-                      align-items: center; justify-content: center; font: 700 14px sans-serif;
-                      box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
-                .rb.on { background: #1E90FF; }
-                .gps { position: relative; width: 28px; height: 28px; }
-                .gps b { position: absolute; left: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%;
-                         background: #1565FF; border: 3px solid #ffffff; box-sizing: border-box;
-                         box-shadow: 0 1px 6px rgba(0,0,0,0.55); }
-                .gps i { position: absolute; left: 0; top: 0; width: 28px; height: 28px; border-radius: 50%;
-                         background: rgba(0,229,255,0.45); animation: gpsPulse 1.8s ease-out infinite; }
-                @keyframes gpsPulse { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.4); opacity: 0; } }
-              </style>
-            </head>
-            <body>
-              <div id="map"></div>
-              <div id="cmp" class="rb" style="top:56px"><svg id="cmpA" width="22" height="22" viewBox="0 0 22 22"><path d="M11 2 L16 12 L11 10 L6 12 Z" fill="#FF3B3B"/><path d="M11 20 L16 12 L11 10 L6 12 Z" fill="#E6EDF3"/></svg></div>
-              <div id="hd" class="rb" style="top:96px">&#10148;</div>
-              <script>
-                var map = null, route = null, routeCase = null, marker = null, startPin = null, endPin = null;
-                var osm = null, sat = null, follow = true, recording = false, pinned = false, refollowTimer = null;
-                var ACCENT = '$accentHex';
-                var ROUTE_COLOR = '#00E5FF';
-                var rotOk = false, headingMode = false, compactMap = false;
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (!compact && ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            val edge = 28f * d
+            parent?.requestDisallowInterceptTouchEvent(ev.x > edge && ev.x < width - edge)
+        }
+        return super.dispatchTouchEvent(ev)
+    }
 
-                function setWpHidden(b) { document.body.className = b ? 'nowp' : ''; }
-                function cmpEl() { return document.getElementById('cmp'); }
-                function hdEl() { return document.getElementById('hd'); }
-                function setCmpTop(px) { cmpEl().style.top = px + 'px'; hdEl().style.top = (px + 40) + 'px'; }
-                function updateCmp() {
-                  if (!map || !rotOk || !map.getBearing) return;
-                  document.getElementById('cmpA').style.transform = 'rotate(' + (-map.getBearing()) + 'deg)';
+    private fun dp(v: Int) = (v * d).toInt()
+
+    private fun round(color: Int, r: Int) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(r).toFloat()
+    }
+
+    private fun styleTabs() {
+        tabs.forEachIndexed { i, v ->
+            val sel = (i == 1) == satellite
+            v.setTextColor(if (sel) onColor(accent) else t.muted)
+            v.background = if (sel) round(accent, 14) else null
+        }
+    }
+
+    private fun roundButton(label: String, action: () -> Unit) = TextView(context).apply {
+        text = label
+        textSize = 20f
+        setTextColor(t.text)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
+        elevation = 4f * d
+        setOnClickListener { action() }
+    }
+
+    init {
+        background = round(t.surface, 18)
+        clipToOutline = true
+        outlineProvider = ViewOutlineProvider.BACKGROUND
+
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        MapHtml.applyCache(web)
+        web.setBackgroundColor(t.surface)
+        web.addJavascriptInterface(Bridge(), "Bridge")
+        web.webViewClient = WebViewClient()
+        // Geser di dalam peta menggeser peta; geser dari tepi kiri/kanan tetap pindah halaman.
+        web.setOnTouchListener { v, e ->
+            if (!compact && e.actionMasked == MotionEvent.ACTION_DOWN) {
+                val edge = 28f * d
+                val inside = e.x > edge && e.x < v.width - edge
+                parent?.requestDisallowInterceptTouchEvent(inside)
+            }
+            false
+        }
+        addView(web, LayoutParams(-1, -1))
+
+        val hex = String.format("#%06X", 0xFFFFFF and accent)
+        web.loadDataWithBaseURL("https://www.openstreetmap.org/", MapHtml.build(hex), "text/html", "UTF-8", null)
+
+        val tabRow = LinearLayout(context).apply {
+            background = round(t.surface, 18)
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            elevation = 4f * d
+        }
+        listOf("Peta", "Satelit").forEachIndexed { i, name ->
+            val v = TextView(context).apply {
+                text = name
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(dp(14), 0, dp(14), 0)
+                setOnClickListener {
+                    satellite = i == 1
+                    styleTabs()
+                    if (ready) web.evaluateJavascript("setLayer('${if (satellite) "sat" else "osm"}')", null)
                 }
-                function initRotateUi() {
-                  if (!rotOk || compactMap) return;
-                  cmpEl().style.display = 'flex';
-                  hdEl().style.display = 'flex';
-                  cmpEl().onclick = function () {
-                    headingMode = false; hdEl().className = 'rb';
-                    if (map.setBearing) map.setBearing(0);
-                    updateCmp();
-                  };
-                  hdEl().onclick = function () {
-                    headingMode = !headingMode;
-                    hdEl().className = headingMode ? 'rb on' : 'rb';
-                    if (headingMode) { follow = true; if (lastHeading !== null) map.setBearing(lastHeading); }
-                  };
-                  setInterval(updateCmp, 300);
+            }
+            tabs.add(v)
+            tabRow.addView(v, LinearLayout.LayoutParams(-2, dp(28)))
+        }
+        styleTabs()
+        if (!compact) addView(tabRow, LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = dp(10); topMargin = dp(10)
+        })
+
+        val controls = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        if (survey) {
+            planBtn = roundButton("✎") { togglePlan() }
+            controls.addView(planBtn, LinearLayout.LayoutParams(dp(34), dp(34)).apply { bottomMargin = dp(6) })
+        }
+        controls.addView(roundButton("+") { if (ready) web.evaluateJavascript("if(map)map.zoomIn()", null) },
+            LinearLayout.LayoutParams(dp(34), dp(34)).apply { bottomMargin = dp(6) })
+        controls.addView(roundButton("−") { if (ready) web.evaluateJavascript("if(map)map.zoomOut()", null) },
+            LinearLayout.LayoutParams(dp(34), dp(34)).apply { bottomMargin = dp(6) })
+        controls.addView(roundButton("◎") { if (ready) web.evaluateJavascript("locate()", null) },
+            LinearLayout.LayoutParams(dp(34), dp(34)))
+        if (!compact) addView(controls, LayoutParams(-2, -2, if (survey) Gravity.END or Gravity.TOP else Gravity.END or Gravity.BOTTOM).apply {
+            rightMargin = dp(10); bottomMargin = dp(12); topMargin = dp(10)
+        })
+
+        // Legenda Start / Stop
+        val legend = LinearLayout(context)
+        fun chip(color: Int, label: String): View {
+            val c = LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(4), dp(10), dp(4))
+                background = round(t.surface, 14)
+                elevation = 4f * d
+            }
+            c.addView(View(context).apply {
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+            }, LinearLayout.LayoutParams(dp(9), dp(9)))
+            c.addView(TextView(context).apply {
+                text = label; textSize = 11f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+            }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(5) })
+            return c
+        }
+        legend.addView(chip(0xFF27D282.toInt(), "Start"))
+        legend.addView(chip(0xFFFF3B3B.toInt(), "Stop"), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
+        if (!survey) addView(legend, LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
+            leftMargin = dp(10); bottomMargin = dp(10)
+        })
+
+        if (!survey && !compact) {
+            val gb = TextView(context).apply {
+                text = "🧭 Rute"; textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(0xFF111111.toInt()); gravity = Gravity.CENTER
+                setPadding(dp(12), 0, dp(12), 0)
+                background = round(0xFFFFB020.toInt(), 14)
+                elevation = 4f * d
+                setOnClickListener { guideDialog() }
+            }
+            addView(gb, LayoutParams(-2, dp(28), Gravity.TOP or Gravity.END).apply {
+                rightMargin = dp(10); topMargin = dp(10)
+            })
+        }
+
+        status = TextView(context).apply {
+            text = "Memuat peta…"
+            textSize = 12f
+            setTextColor(t.muted)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        addView(status, LayoutParams(-2, -2, Gravity.CENTER))
+        if (survey) buildPlanBar()
+
+        handler.postDelayed({
+            if (!ready && !failed) {
+                status.text = "Peta belum termuat. Periksa koneksi internet."
+            }
+        }, 15000)
+    }
+
+    // ---------- Rencana rute (hanya mode survei) ----------
+
+    private fun prefs() = context.getSharedPreferences("survey", Context.MODE_PRIVATE)
+
+    private fun pill(label: String, fill: Int, textColor: Int = onColor(fill), action: () -> Unit) = TextView(context).apply {
+        text = label
+        textSize = 11f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setPadding(dp(10), 0, dp(10), 0)
+        setTextColor(textColor)
+        background = round(fill, 15)
+        setOnClickListener { action() }
+    }
+
+    private fun buildPlanBar() {
+        val bar = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = round((t.surface and 0x00FFFFFF) or 0xEE000000.toInt(), 14)
+            elevation = 6f * d
+            visibility = View.GONE
+        }
+        val head = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(TextView(context).apply {
+            text = "Rencana rute"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+        })
+        val info = TextView(context).apply {
+            text = " · 0,00 km · ketuk peta untuk menambah titik"
+            textSize = 12f; setTextColor(t.muted)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setOnClickListener {
+                planRoad = !planRoad
+                if (ready) web.evaluateJavascript("setRoad($planRoad,'$profile')", null)
+                onPlanChanged(planDist, planWps.size, false, false, wpsJson(planWps))
+            }
+        }
+        planInfo = info
+        head.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(TextView(context).apply {
+            text = "☰"; textSize = 16f; setTextColor(t.text); gravity = Gravity.CENTER
+            setOnClickListener { choosePlanDialog() }
+        }, LinearLayout.LayoutParams(dp(30), dp(26)))
+        bar.addView(head)
+
+        val row = LinearLayout(context)
+        row.addView(pill("↶ Urungkan", t.bg, t.text) { if (ready) web.evaluateJavascript("undoWp()", null) },
+            LinearLayout.LayoutParams(-2, dp(30)))
+        row.addView(pill("Hapus", t.bg, t.text) { if (ready) web.evaluateJavascript("clearPlan()", null) },
+            LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
+        row.addView(pill("Simpan", 0xFFFFB020.toInt(), 0xFF111111.toInt()) { savePlanDialog() },
+            LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
+        row.addView(pill("Maps ↗", t.bg, t.text) {
+            if (planWps.size < 2) Toast.makeText(context, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
+            else openDirections(planWps, profile)
+        }, LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
+        bar.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+
+        val row2 = LinearLayout(context)
+        val lp = pill("→ Sekali jalan", t.bg, t.text) {
+            planLoop = !planLoop
+            loopPill?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
+            if (ready) web.evaluateJavascript("setLoop($planLoop)", null)
+        }
+        loopPill = lp
+        row2.addView(lp, LinearLayout.LayoutParams(0, dp(30), 1.3f))
+        row2.addView(pill("☷ Titik", t.bg, t.text) { waypointListDialog() },
+            LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
+        row2.addView(pill("⌕ Cari", t.bg, t.text) { searchDialog() },
+            LinearLayout.LayoutParams(0, dp(30), 1f).apply { leftMargin = dp(6) })
+        bar.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        planBar = bar
+        addView(bar, LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+            leftMargin = dp(8); rightMargin = dp(8); bottomMargin = dp(8)
+        })
+    }
+
+    private fun togglePlan() {
+        if (!ready) {
+            Toast.makeText(context, "Peta belum siap.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        planOn = !planOn
+        planBar?.visibility = if (planOn) View.VISIBLE else View.GONE
+        planBtn?.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (planOn) 0xFFFFB020.toInt() else t.surface)
+        }
+        planBtn?.setTextColor(if (planOn) 0xFF111111.toInt() else t.text)
+        web.evaluateJavascript("setPlan($planOn)", null)
+    }
+
+    private fun onPlanChanged(dist: Double, count: Int, snapped: Boolean, err: Boolean, json: String) {
+        planDist = dist
+        val list = ArrayList<DoubleArray>()
+        try {
+            val arr = org.json.JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val q = arr.getJSONArray(i)
+                list.add(doubleArrayOf(q.getDouble(0), q.getDouble(1)))
+            }
+        } catch (e: Exception) {
+        }
+        planWps = list
+        val how = when {
+            count < 2 -> "ketuk peta untuk menambah titik"
+            !planRoad -> "garis lurus (ketuk: ikuti jalan)"
+            err -> "jalan tidak ditemukan"
+            snapped -> "mengikuti jalan"
+            else -> "menghitung jalan…"
+        }
+        val kmh = if (profile == "bike") 16.0 else 5.0
+        val mnt = Math.round(dist / 1000.0 / kmh * 60.0).toInt()
+        val dur = if (mnt >= 60) (mnt / 60).toString() + " j " + (mnt % 60) + " mnt" else "$mnt mnt"
+        planInfo?.text = " · " + Fmt.dec(dist / 1000.0, 2) + " km · " + dur + " · " + count + " titik · " + how
+    }
+
+    private fun wpsText(w: List<DoubleArray>) = w.joinToString(";") { String.format(Locale.US, "%.6f,%.6f", it[0], it[1]) }
+
+    private fun parseWps(s: String): List<DoubleArray> = s.split(";").mapNotNull { q ->
+        val p = q.split(",")
+        val la = p.getOrNull(0)?.toDoubleOrNull()
+        val lo = p.getOrNull(1)?.toDoubleOrNull()
+        if (la != null && lo != null) doubleArrayOf(la, lo) else null
+    }
+
+    private fun wpsJson(w: List<DoubleArray>): String {
+        val sb = StringBuilder("[")
+        for ((i, p) in w.withIndex()) {
+            if (i > 0) sb.append(',')
+            sb.append(String.format(Locale.US, "[%.6f,%.6f]", p[0], p[1]))
+        }
+        return sb.append(']').toString()
+    }
+
+    /** Rencana tersimpan: id|nama|road(0/1)|profil|jarakM|lat,lon;lat,lon (sama dengan menu Peta). */
+    private fun loadPlans(): MutableList<List<String>> =
+        (prefs().getString("plans", "") ?: "").lines().filter { it.isNotBlank() }
+            .map { it.split("|") }.filter { it.size >= 6 }.toMutableList()
+
+    private fun loadPlanOnMap(p: List<String>, fit: Boolean) {
+        if (!ready) return
+        planRoad = p[2] == "1"
+        planLoop = p.getOrNull(6) == "1"
+        loopPill?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
+        web.evaluateJavascript("loadPlan(${wpsJson(parseWps(p[5]))},$planRoad,'${p[3]}',$fit,$planLoop)", null)
+    }
+
+    private fun loadActivePlan() {
+        val act = prefs().getString("active_plan", "") ?: ""
+        loadPlans().firstOrNull { it[0] == act }?.let { loadPlanOnMap(it, false) }
+    }
+
+    /** Pilih rute rencana sebagai garis panduan saat bersepeda (tanpa mode edit). */
+    private fun guideDialog() {
+        val plans = loadPlans()
+        if (plans.isEmpty()) {
+            Toast.makeText(context, "Belum ada rute. Buat dulu di menu Rute lalu Simpan rute.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val names = ArrayList<String>()
+        names.add("Tanpa panduan")
+        plans.forEach { names.add(it[1] + " · " + Fmt.dec((it[4].toDoubleOrNull() ?: 0.0) / 1000.0, 2) + " km") }
+        AlertDialog.Builder(context)
+            .setTitle("Ikuti rute")
+            .setItems(names.toTypedArray()) { _, i ->
+                if (i == 0) {
+                    prefs().edit().putString("active_plan", "").apply()
+                    if (TrackerState.running) TrackerState.loadGuide(context)
+                    if (ready) web.evaluateJavascript("loadPlan([],true,'bike',false)", null)
+                } else {
+                    prefs().edit().putString("active_plan", plans[i - 1][0]).apply()
+                    if (TrackerState.running) TrackerState.loadGuide(context)
+                    loadPlanOnMap(plans[i - 1], true)
                 }
-                var lastHeading = null;
-                function bearingOf(a, b) {
-                  var r = Math.PI / 180, y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
-                  var x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
-                  return (Math.atan2(y, x) / r + 360) % 360;
-                }
-                function noteMove(prev, cur) {
-                  if (!prev || !map) return;
-                  if (map.distance(prev, cur) < 4) return;
-                  var b = bearingOf(prev, cur);
-                  if (lastHeading !== null) {
-                    var d = ((b - lastHeading + 540) % 360) - 180;
-                    b = (lastHeading + d * 0.5 + 360) % 360;
-                  }
-                  lastHeading = b;
-                  if (headingMode && rotOk && map.setBearing) map.setBearing(b);
-                }
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
 
-                function gpsMarker(p) {
-                  return L.marker(p, {
-                    icon: L.divIcon({ className: '', html: '<div class="gps"><i></i><b></b></div>', iconSize: [28, 28], iconAnchor: [14, 14] }),
-                    zIndexOffset: 1000, interactive: false
-                  });
-                }
+    private fun longPressDialog(lat: Double, lon: Double) {
+        val la = String.format(Locale.US, "%.6f", lat)
+        val lo = String.format(Locale.US, "%.6f", lon)
+        val items = arrayOf("🟢 Mulai di sini (A)", "🔴 Jadikan titik akhir (B)", "＋ Tambah ke rute")
+        AlertDialog.Builder(context)
+            .setTitle("$la, $lo")
+            .setItems(items) { _, i ->
+                if (!ready) return@setItems
+                val fn = when (i) { 0 -> "startHere"; 1 -> "endHere"; else -> "addWp" }
+                web.evaluateJavascript("$fn($la,$lo)", null)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
 
-                function dotStyle(color) {
-                  return { radius: 8, color: '#ffffff', weight: 3, fillColor: color, fillOpacity: 1 };
-                }
+    private fun waypointListDialog() {
+        if (planWps.isEmpty()) {
+            Toast.makeText(context, "Belum ada titik. Tekan lama di peta.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val n = planWps.size
+        val names = Array(n) { i ->
+            val tag = if (n > 1 && i == 0) "A" else if (n > 1 && i == n - 1) "B" else (i + 1).toString()
+            tag + "   " + String.format(Locale.US, "%.5f, %.5f", planWps[i][0], planWps[i][1])
+        }
+        AlertDialog.Builder(context)
+            .setTitle("Titik rute")
+            .setItems(names) { _, i ->
+                AlertDialog.Builder(context)
+                    .setTitle(names[i])
+                    .setItems(arrayOf("Lihat di peta", "Naik", "Turun", "Hapus titik")) { _, k ->
+                        if (!ready) return@setItems
+                        when (k) {
+                            0 -> web.evaluateJavascript(String.format(Locale.US, "focusMark(%.6f,%.6f)", planWps[i][0], planWps[i][1]), null)
+                            1 -> web.evaluateJavascript("moveWp($i,-1)", null)
+                            2 -> web.evaluateJavascript("moveWp($i,1)", null)
+                            else -> web.evaluateJavascript("removeWp($i)", null)
+                        }
+                    }
+                    .setNegativeButton("Tutup", null)
+                    .show()
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
 
-                function pin(cls) {
-                  return L.divIcon({
-                    className: '',
-                    html: '<div class="pin ' + cls + '"></div>',
-                    iconSize: [32, 32],
-                    iconAnchor: [16, 39]
-                  });
-                }
+    private fun searchDialog() {
+        val et = android.widget.EditText(context).apply {
+            hint = "Nama tempat atau jalan"
+            setSingleLine()
+        }
+        AlertDialog.Builder(context)
+            .setTitle("Cari lokasi")
+            .setView(et)
+            .setPositiveButton("Cari") { _, _ ->
+                val q = et.text.toString().trim()
+                if (q.isNotEmpty() && ready) web.evaluateJavascript("searchPlace(" + org.json.JSONObject.quote(q) + ")", null)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
 
-                function initMap() {
-                  var opts = { zoomControl: false };
-                  if (rotOk) { opts.rotate = true; opts.touchRotate = true; opts.bearing = 0; opts.rotateControl = false; }
-                  try { map = L.map('map', opts); }
-                  catch (e) { rotOk = false; map = L.map('map', { zoomControl: false }); }
-                  map.setView([-2.5, 118], 5);
-                  osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap contributors'
-                  }).addTo(map);
-                  sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                    maxZoom: 19,
-                    attribution: 'Tiles &copy; Esri'
-                  });
-                  map.on('dragstart', function () { follow = false; if (refollowTimer) { clearTimeout(refollowTimer); refollowTimer = null; } });
-                  // Saat merekam, peta otomatis kembali mengikuti posisi 8 detik setelah disentuh.
-                  map.on('dragend', function () {
-                    if (!recording || pinned) return;
-                    if (refollowTimer) clearTimeout(refollowTimer);
-                    refollowTimer = setTimeout(function () {
-                      refollowTimer = null;
-                      follow = true;
-                      if (marker) { map.panTo(marker.getLatLng(), { animate: true, duration: 0.8 }); }
-                    }, 8000);
-                  });
-                  routeCase = L.polyline([], { color: '#03222B', weight: 11, opacity: 0.6, lineJoin: 'round', lineCap: 'round' }).addTo(map);
-                  route = L.polyline([], { color: ROUTE_COLOR, weight: 6, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(map);
-                  planInit();
-                  initRotateUi();
-                  Bridge.onReady();
-                }
+    private fun choosePlanDialog() {
+        val plans = loadPlans()
+        if (plans.isEmpty()) {
+            Toast.makeText(context, "Belum ada rencana tersimpan.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = plans.map { it[1] + " · " + Fmt.dec((it[4].toDoubleOrNull() ?: 0.0) / 1000.0, 2) + " km" }
+        AlertDialog.Builder(context)
+            .setTitle("Rencana tersimpan")
+            .setItems(names.toTypedArray()) { _, i ->
+                if (!planOn) togglePlan()
+                loadPlanOnMap(plans[i], true)
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
 
-                function loadLeaflet(bases, i) {
-                  if (i >= bases.length) { Bridge.onFail(); return; }
-                  var css = document.createElement('link');
-                  css.rel = 'stylesheet';
-                  css.href = bases[i] + 'leaflet.css';
-                  document.head.appendChild(css);
-                  var s = document.createElement('script');
-                  s.src = bases[i] + 'leaflet.js';
-                  s.onload = function () { loadRotate(0); };
-                  s.onerror = function () { loadLeaflet(bases, i + 1); };
-                  document.head.appendChild(s);
-                }
+    private fun savePlanDialog() {
+        if (planWps.size < 2) {
+            Toast.makeText(context, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val et = android.widget.EditText(context).apply {
+            setText("Rute " + (loadPlans().size + 1))
+            setSingleLine()
+        }
+        AlertDialog.Builder(context)
+            .setTitle("Simpan rencana rute")
+            .setView(et)
+            .setPositiveButton("Simpan") { _, _ ->
+                val name = et.text.toString().replace("|", " ").replace("\n", " ").trim().ifEmpty { "Rute" }
+                val list = loadPlans()
+                list.add(0, listOf(
+                    System.currentTimeMillis().toString(), name, if (planRoad) "1" else "0",
+                    profile, planDist.toInt().toString(), wpsText(planWps), if (planLoop) "1" else "0", planGeo
+                ))
+                prefs().edit().putString("plans", list.take(20).joinToString("\n") { it.joinToString("|") }).apply()
+                Toast.makeText(context, "Rencana \"$name\" disimpan", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
 
-                // Plugin putar peta (dua jari). Kalau gagal dimuat, peta tetap jalan tanpa putar.
-                var ROT = [
-                  'https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js',
-                  'https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js'
-                ];
-                function loadRotate(i) {
-                  if (i >= ROT.length) { rotOk = false; initMap(); return; }
-                  var s = document.createElement('script');
-                  s.src = ROT[i];
-                  s.onload = function () { rotOk = true; initMap(); };
-                  s.onerror = function () { loadRotate(i + 1); };
-                  document.head.appendChild(s);
-                }
+    private fun openDirections(w: List<DoubleArray>, prof: String) {
+        val pts = if (w.size <= 10) w else List(10) { i -> w[(i * (w.size - 1)) / 9] }
+        val sb = StringBuilder("https://www.google.com/maps/dir/")
+        for (q in pts) sb.append(String.format(Locale.US, "%.6f,%.6f/", q[0], q[1]))
+        sb.append("?travelmode=").append(if (prof == "bike") "bicycling" else "walking")
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sb.toString())))
+        } catch (e: Exception) {
+            Toast.makeText(context, "Tidak bisa membuka peta.", Toast.LENGTH_LONG).show()
+        }
+    }
 
-                loadLeaflet([
-                  'https://unpkg.com/leaflet@1.9.4/dist/',
-                  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'
-                ], 0);
+    private fun loadSavedMarks() {
+        for (line in (prefs().getString("points", "") ?: "").lines()) {
+            val f = line.split("|")
+            if (f.size >= 5) markPoint(f[1].toDoubleOrNull() ?: continue, f[2].toDoubleOrNull() ?: continue, f[4])
+        }
+    }
 
-                // Ganti tampilan peta: 'osm' (Peta) atau 'sat' (Satelit).
-                function setLayer(n) {
-                  if (!map) return;
-                  if (n === 'sat') { if (map.hasLayer(osm)) map.removeLayer(osm); if (!map.hasLayer(sat)) sat.addTo(map); }
-                  else { if (map.hasLayer(sat)) map.removeLayer(sat); if (!map.hasLayer(osm)) osm.addTo(map); }
-                }
+    /** Penanda titik survei (oranye) di peta. */
+    fun markPoint(lat: Double, lon: Double, name: String) {
+        if (!ready) return
+        val safe = name.replace("'", "").replace("\\", "")
+        web.evaluateJavascript(String.format(Locale.US, "addMark(%.6f,%.6f,'%s')", lat, lon, safe), null)
+    }
 
-                // Tombol lokasi: kembali mengikuti posisi, atau tampilkan seluruh rute.
-                function locate() {
-                  if (!map) return;
-                  follow = true; pinned = false;
-                  if (marker) { map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16)); }
-                  else if (route && route.getLatLngs().length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
-                  else if (endPin) { map.setView(endPin.getLatLng(), 16); }
-                }
+    /** Pusatkan peta pada satu titik. */
+    fun focusPoint(lat: Double, lon: Double) {
+        if (ready) web.evaluateJavascript(String.format(Locale.US, "focusMark(%.6f,%.6f)", lat, lon), null)
+    }
 
-                // Rute yang sedang direkam: tambahkan titik baru dan ikuti posisi terakhir.
-                function addPoints(arr) {
-                  if (!map || arr.length === 0) return;
-                  recording = true;
-                  var first = route.getLatLngs().length === 0;
-                  var prevPos = marker ? marker.getLatLng() : null;
-                  for (var i = 0; i < arr.length; i++) { route.addLatLng(arr[i]); routeCase.addLatLng(arr[i]); }
-                  var last = arr[arr.length - 1];
-                  if (first) { startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map); }
-                  if (!marker) {
-                    marker = gpsMarker(last).addTo(map);
-                    map.setView(last, 17);
-                  } else {
-                    marker.setLatLng(last);
-                    noteMove(prevPos, marker.getLatLng());
-                    if (follow) map.panTo(last, { animate: true, duration: 0.8, easeLinearity: 0.5 });
-                  }
-                }
+    /** Posisi GPS saat ini (dipakai saat belum merekam). */
+    fun position(lat: Double, lon: Double) {
+        if (!ready) return
+        web.evaluateJavascript(String.format(Locale.US, "setPosition(%.6f,%.6f,%b)", lat, lon, firstPos), null)
+        firstPos = false
+    }
 
-                // Rute perjalanan dari riwayat: tampilkan utuh dengan pin Start dan Finish.
-                function showRoute(arr) {
-                  if (!map || arr.length === 0) return;
-                  route.setLatLngs(arr);
-                  routeCase.setLatLngs(arr);
-                  startPin = L.marker(arr[0], { icon: pin('g') }).addTo(map);
-                  endPin = L.marker(arr[arr.length - 1], { icon: pin('r') }).addTo(map);
-                  if (arr.length > 1) { map.fitBounds(route.getBounds(), { padding: [40, 40] }); }
-                  else { map.setView(arr[0], 17); }
-                }
+    /** Kirim titik rute baru ke peta (aman dipanggil tiap detik). */
+    fun sync(route: List<DoubleArray>) {
+        pending = route
+        if (ready) flush()
+    }
 
-                // Pin Stop (merah) di titik terakhir rute yang sedang direkam.
-                function setEnd(lat, lon) {
-                  if (!map) return;
-                  if (!endPin) { endPin = L.marker([lat, lon], { icon: pin('r') }).addTo(map); }
-                  else { endPin.setLatLng([lat, lon]); }
-                }
+    private fun flush() {
+        val r = pending
+        val hide = TrackerState.running && !survey
+        if (hide != wpHidden) {
+            wpHidden = hide
+            web.evaluateJavascript("setWpHidden($hide)", null)
+        }
+        if (r.size < sent) {
+            sent = 0
+            web.evaluateJavascript("route.setLatLngs([])", null)
+        }
+        if (r.size > sent) {
+            val sb = StringBuilder("[")
+            for (i in sent until r.size) {
+                if (i > sent) sb.append(',')
+                sb.append(String.format(Locale.US, "[%.6f,%.6f]", r[i][0], r[i][1]))
+            }
+            sb.append(']')
+            web.evaluateJavascript("addPoints($sb)", null)
+            val last = r[r.size - 1]
+            web.evaluateJavascript(String.format(Locale.US, "setEnd(%.6f,%.6f)", last[0], last[1]), null)
+            if (compact) web.evaluateJavascript("fitAll()", null)
+            sent = r.size
+        }
+    }
 
-                // Peta mini: tampilkan seluruh rute dan kunci gerakan jari.
-                function fitAll() {
-                  if (!map) return;
-                  if (route.getLatLngs().length > 1) { map.fitBounds(route.getBounds(), { padding: [34, 34], maxZoom: 18 }); }
-                }
+    fun onPause() = web.onPause()
 
-                function lockMap() {
-                  if (!map) return;
-                  map.dragging.disable(); map.touchZoom.disable(); map.doubleClickZoom.disable();
-                  map.scrollWheelZoom.disable(); map.boxZoom.disable(); map.keyboard.disable();
-                  compactMap = true;
-                  if (map.touchRotate) map.touchRotate.disable();
-                  cmpEl().style.display = 'none'; hdEl().style.display = 'none';
-                }
+    fun onResume() = web.onResume()
 
-                // ---- Rencana rute manual: ketuk peta untuk menambah titik yang akan dilewati ----
-                var plan = { on: false, road: true, loop: false, profile: 'bike', wps: [], mk: [], line: null, dist: 0 };
-                var reqId = 0;
-
-                function planInit() {
-                  plan.line = L.polyline([], { color: '#1E90FF', weight: 6, opacity: 0.7, lineJoin: 'round', lineCap: 'round' }).addTo(map);
-                  map.on('click', function (e) { if (plan.on) { addWp(e.latlng.lat, e.latlng.lng); } });
-                  map.on('contextmenu', function (e) {
-                    if (!plan.on) { return; }
-                    if (e.originalEvent && e.originalEvent.preventDefault) { e.originalEvent.preventDefault(); }
-                    Bridge.onLongPress(e.latlng.lat, e.latlng.lng);
-                  });
-                }
-
-                function setPlan(on) { plan.on = on; renderWps(); }
-
-                function setRoad(on, profile) { plan.road = on; plan.profile = profile; recompute(); }
-
-                function addWp(lat, lon) { plan.wps.push([lat, lon]); renderWps(); recompute(); }
-
-                function addCenter() { var c = map.getCenter(); addWp(c.lat, c.lng); }
-
-                function startHere(lat, lon) {
-                  if (plan.wps.length === 0) { plan.wps.push([lat, lon]); } else { plan.wps[0] = [lat, lon]; }
-                  renderWps(); recompute();
-                }
-
-                function endHere(lat, lon) {
-                  if (plan.wps.length < 2) { plan.wps.push([lat, lon]); } else { plan.wps[plan.wps.length - 1] = [lat, lon]; }
-                  renderWps(); recompute();
-                }
-
-                function removeWp(i) { plan.wps.splice(i, 1); renderWps(); recompute(); }
-
-                function moveWp(i, dir) {
-                  var j = i + dir;
-                  if (j < 0 || j >= plan.wps.length) { return; }
-                  var t = plan.wps[i]; plan.wps[i] = plan.wps[j]; plan.wps[j] = t;
-                  renderWps(); recompute();
-                }
-
-                function setLoop(on) { plan.loop = on; recompute(); }
-
-                function searchPlace(q) {
-                  fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q))
-                    .then(function (r) { return r.json(); }).then(function (j) {
-                      if (j && j[0]) { follow = false; pinned = true; map.setView([parseFloat(j[0].lat), parseFloat(j[0].lon)], 16); Bridge.onMsg('Ditemukan: ' + j[0].display_name.split(',')[0]); }
-                      else { Bridge.onMsg('Lokasi tidak ditemukan'); }
-                    }).catch(function () { Bridge.onMsg('Pencarian butuh internet'); });
-                }
-
-                function undoWp() { plan.wps.pop(); renderWps(); recompute(); }
-
-                function clearPlan() { plan.wps = []; renderWps(); recompute(); }
-
-                function loadPlan(arr, road, profile, fit, loop) {
-                  plan.wps = arr; plan.road = road; plan.profile = profile; plan.loop = !!loop;
-                  renderWps(); recompute();
-                  if (fit && arr.length > 1) { map.fitBounds(L.latLngBounds(arr), { padding: [50, 50] }); }
-                  else if (fit && arr.length === 1) { map.setView(arr[0], 16); }
-                }
-
-                function renderWps() {
-                  for (var i = 0; i < plan.mk.length; i++) { map.removeLayer(plan.mk[i]); }
-                  plan.mk = [];
-                  plan.wps.forEach(function (p, i) {
-                    var m = L.marker(p, {
-                      draggable: plan.on,
-                      icon: L.divIcon({ className: 'wpi', html: '<div class="wp" style="' + (plan.wps.length > 1 && i === 0 ? 'background:#27D282;' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'background:#FF3B3B;color:#fff;' : '')) + '">' + (plan.wps.length > 1 && i === 0 ? 'A' : (plan.wps.length > 1 && i === plan.wps.length - 1 ? 'B' : (i + 1))) + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] })
-                    }).addTo(map);
-                    m.on('dragend', function (ev) { var q = ev.target.getLatLng(); plan.wps[i] = [q.lat, q.lng]; recompute(); });
-                    plan.mk.push(m);
-                  });
-                }
-
-                function straightDist(a) {
-                  var d = 0;
-                  for (var i = 1; i < a.length; i++) { d += map.distance(a[i - 1], a[i]); }
-                  return d;
-                }
-
-                function report(snapped, err) {
-                  Bridge.onPlan(plan.dist, plan.wps.length, snapped, err, JSON.stringify(plan.wps));
-                  try {
-                    var g = plan.line.getLatLngs();
-                    var st = Math.max(1, Math.ceil(g.length / 400));
-                    var o = [];
-                    for (var i = 0; i < g.length; i += st) { o.push(g[i].lat.toFixed(5) + ',' + g[i].lng.toFixed(5)); }
-                    if (g.length > 0 && (g.length - 1) % st !== 0) { var z = g[g.length - 1]; o.push(z.lat.toFixed(5) + ',' + z.lng.toFixed(5)); }
-                    if (Bridge.onGeo) { Bridge.onGeo(o.join(';')); }
-                  } catch (e) { }
-                }
-
-                function recompute() {
-                  var id = ++reqId;
-                  var pts = plan.wps.slice();
-                  if (plan.loop && pts.length >= 2) { pts.push(pts[0]); }
-                  plan.line.setLatLngs(pts);
-                  plan.dist = straightDist(pts);
-                  report(false, false);
-                  if (!plan.road || pts.length < 2) { return; }
-                  var coords = pts.map(function (p) { return p[1] + ',' + p[0]; }).join(';');
-                  var prof = plan.profile === 'foot' ? 'routed-foot' : 'routed-bike';
-                  var url = 'https://routing.openstreetmap.de/' + prof + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
-                  fetch(url).then(function (r) { return r.json(); }).then(function (j) {
-                    if (id !== reqId) { return; }
-                    if (j.routes && j.routes[0]) {
-                      var c = j.routes[0].geometry.coordinates.map(function (q) { return [q[1], q[0]]; });
-                      plan.line.setLatLngs(c);
-                      plan.dist = j.routes[0].distance;
-                      report(true, false);
-                    } else { report(false, true); }
-                  }).catch(function () { if (id === reqId) { report(false, true); } });
-                }
-
-                // Titik survei: penanda oranye yang bisa dipilih.
-                var marks = null;
-                function addMark(lat, lon, name) {
-                  if (!map) return;
-                  if (!marks) { marks = L.layerGroup().addTo(map); }
-                  L.circleMarker([lat, lon], { radius: 9, color: '#ffffff', weight: 3, fillColor: '#FF9F1C', fillOpacity: 1 })
-                    .bindTooltip(name, { permanent: false }).addTo(marks);
-                }
-                function clearMarks() { if (marks) { marks.clearLayers(); } }
-                function focusMark(lat, lon) { if (!map) return; follow = false; pinned = true; map.setView([lat, lon], 18); }
-
-                // Posisi saat ini (tanpa tracking).
-                function setPosition(lat, lon, first) {
-                  if (!map) return;
-                  var p = [lat, lon];
-                  if (!marker) { marker = gpsMarker(p).addTo(map); }
-                  else { var pv = marker.getLatLng(); marker.setLatLng(p); noteMove(pv, marker.getLatLng()); }
-                  if (first) { map.setView(p, 17); } else if (follow) { map.panTo(p); }
-                }
-              </script>
-            </body>
-            </html>
-        """.trimIndent()
+    fun release() {
+        handler.removeCallbacksAndMessages(null)
+        try {
+            web.stopLoading()
+            web.destroy()
+        } catch (e: Exception) {
+        }
     }
 }
