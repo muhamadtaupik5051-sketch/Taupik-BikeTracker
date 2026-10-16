@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 ke atas: sama seperti backup_rules, untuk cadangan awan dan pindah perangkat. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="session.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="session.xml" />
+    </device-transfer>
+</data-extraction-rules>
