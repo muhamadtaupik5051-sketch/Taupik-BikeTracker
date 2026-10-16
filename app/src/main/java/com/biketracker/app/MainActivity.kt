@@ -515,6 +515,7 @@ class MainActivity : Activity() {
     }
 
     private fun circleBtn(label: String, action: () -> Unit) = tv(label, 18f, t.text, true).apply {
+        contentDescription = if (label == "+") "Tambah" else "Kurangi"
         gravity = Gravity.CENTER
         background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface2) }
         setOnClickListener { action() }
@@ -854,6 +855,20 @@ class MainActivity : Activity() {
         showTracking()
         handler.removeCallbacks(timer)
         handler.post(timer)
+        maybeBatteryHint()
+    }
+
+    /** Sekali saja: ingatkan mengecualikan aplikasi dari penghematan baterai supaya rekaman tidak dimatikan sistem. */
+    private fun maybeBatteryHint() {
+        if (batteryIgnored() || prefs.getBoolean("battery_hint", false)) return
+        prefs.edit().putBoolean("battery_hint", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("Agar rekaman tidak terputus")
+            .setMessage("Beberapa HP (Xiaomi, Oppo, Vivo, Samsung) menghentikan aplikasi di latar belakang. " +
+                "Kecualikan RideTrack Pro dari penghematan baterai supaya GPS tetap merekam saat layar mati.")
+            .setPositiveButton("Atur sekarang") { _, _ -> openBatterySettings() }
+            .setNegativeButton("Nanti", null)
+            .show()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -1152,6 +1167,7 @@ class MainActivity : Activity() {
         gpsText = gps
         top.addView(gps, LinearLayout.LayoutParams(0, -2, 1f))
         top.addView(tv("⌖", 20f, t.text).apply {
+            contentDescription = "Buka peta"
             gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
             setOnClickListener { openMap() }
