@@ -367,7 +367,7 @@ class TrackingService : Service() {
             "Jalan" -> Fmt.int(TrackerState.steps()) + " langkah • " + Fmt.dec(km, 2) + " km • " + time
             else -> Fmt.dec(km, 2) + " km • " + time
         }
-        val body = (if (TrackerState.offRoute && getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_route", true)) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else "")
+        val body = (if (TrackerState.offRoute && getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_route", true)) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else if (TrackerState.autoPaused) " • jeda otomatis" else "")
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else Notification.Builder(this)
         val paused = TrackerState.paused
