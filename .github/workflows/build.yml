@@ -1,4 +1,4 @@
-name: Build RideTrack Pro V3 APK
+name: Build RideTrack Pro APK
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build Android APK dan AAB
     runs-on: ubuntu-latest
 
     steps:
@@ -29,13 +29,23 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Show project files
+      # Peta memuat Leaflet dari assets lebih dulu (tanpa CDN). Kalau langkah ini gagal,
+      # aplikasi otomatis memakai CDN seperti sebelumnya.
+      - name: Unduh Leaflet untuk peta
+        continue-on-error: true
         run: |
-          pwd
-          ls -la
-          find . -maxdepth 4 -type f | sort
+          set -e
+          mkdir -p app/src/main/assets/leaflet "$RUNNER_TEMP/lf/l" "$RUNNER_TEMP/lf/r"
+          cd "$RUNNER_TEMP/lf"
+          npm pack leaflet@1.9.4 leaflet-rotate@0.2.8
+          tar xzf leaflet-1.9.4.tgz -C l
+          tar xzf leaflet-rotate-0.2.8.tgz -C r
+          cd "$GITHUB_WORKSPACE"
+          cp "$RUNNER_TEMP/lf/l/package/dist/leaflet.js" "$RUNNER_TEMP/lf/l/package/dist/leaflet.css" app/src/main/assets/leaflet/
+          cp -r "$RUNNER_TEMP/lf/l/package/dist/images" app/src/main/assets/leaflet/images
+          cp "$RUNNER_TEMP/lf/r/package/dist/leaflet-rotate-src.js" app/src/main/assets/leaflet/
+          ls -R app/src/main/assets/leaflet
 
-      
       - name: Siapkan keystore tetap (jika ada secret)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -48,23 +58,75 @@ jobs:
             echo "Secret KEYSTORE_BASE64 kosong, memakai kunci debug bawaan"
           fi
 
-      - name: Build APK
+      # Nomor versi naik otomatis tiap build supaya bisa diunggah ulang ke Google Play.
+      - name: Atur nomor versi
+        run: echo "VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+
+      # Pemeriksaan kualitas: hasilnya dilaporkan, tetapi tidak menggagalkan pembuatan APK.
+      - name: Unit test
+        continue-on-error: true
+        run: gradle testDebugUnitTest --console=plain
+
+      - name: Lint
+        continue-on-error: true
+        run: gradle lintDebug --console=plain
+
+      - name: Build APK debug
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
-          gradle assembleDebug --stacktrace --info --console=plain 2>&1 | tee build.log
+          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee build.log
 
+      # Versi release (diperkecil dengan R8). Kalau gagal, APK debug di atas tetap tersedia.
+      - name: Build APK release dan AAB
+        continue-on-error: true
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          gradle assembleRelease bundleRelease --stacktrace --console=plain 2>&1 | tee build-release.log
 
-      - name: Upload APK
+      - name: Upload APK debug
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: RideTrack-Pro-V3-APK
+          name: RideTrack-Pro-APK-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload APK release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RideTrack-Pro-APK-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload AAB (untuk Google Play)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RideTrack-Pro-AAB
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload laporan lint dan test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: laporan-lint-test
+          path: |
+            app/build/reports/lint-results-debug.html
+            app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Upload build log
@@ -72,5 +134,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            build-release.log
+          if-no-files-found: ignore
           retention-days: 7
