@@ -15,6 +15,11 @@ object TrackerState {
 
     var running = false
     var paused = false
+
+    /** Jeda otomatis saat berhenti (lampu merah, istirahat); dinyalakan/dimatikan di Pengaturan. */
+    @Volatile var autoPause = true
+    @Volatile var autoPaused = false
+    private var slowSinceMs = 0L
     var mode = "Sepeda"
     /** Target dalam satuan mode: km untuk Sepeda/Lari, langkah untuk Jalan. */
     var target = 10
@@ -188,11 +193,15 @@ object TrackerState {
         routeEvent = 0
         running = true
         paused = false
+        autoPaused = false
+        slowSinceMs = 0L
     }
 
     fun pause() {
         if (!running || paused) return
-        elapsedBeforeRun += System.currentTimeMillis() - runStartedAt
+        if (!autoPaused) elapsedBeforeRun += System.currentTimeMillis() - runStartedAt
+        autoPaused = false
+        slowSinceMs = 0L
         paused = true
         speedKmh = 0f
         smoothKmh = 0f
@@ -215,12 +224,14 @@ object TrackerState {
         elapsedBeforeRun = elapsed
         running = false
         paused = false
+        autoPaused = false
+        slowSinceMs = 0L
         speedKmh = 0f
         smoothKmh = 0f
     }
 
     fun currentElapsed(): Long =
-        elapsedBeforeRun + if (running && !paused) System.currentTimeMillis() - runStartedAt else 0L
+        elapsedBeforeRun + if (running && !paused && !autoPaused) System.currentTimeMillis() - runStartedAt else 0L
 
     /** Rata-rata kecepatan memakai waktu bergerak (berhenti di lampu merah tidak dihitung). */
     fun averageSpeed(): Float {
@@ -288,6 +299,57 @@ object TrackerState {
         return Location(raw).apply { latitude = kLat; longitude = kLng }
     }
 
+    /**
+     * Jeda/lanjut otomatis berdasarkan kecepatan GPS. Mengembalikan true bila sedang jeda otomatis
+     * (titik ini tidak dihitung). GPS tetap menyala supaya gerakan berikutnya terdeteksi.
+     */
+    private fun autoPauseStep(loc: Location): Boolean {
+        if (!autoPause) {
+            if (autoPaused) leaveAutoPause()
+            slowSinceMs = 0L
+            return false
+        }
+        if (!loc.hasSpeed()) return autoPaused
+        val walk = mode == "Jalan"
+        val stopBelow = if (walk) 0.4f else 0.8f
+        val goAbove = if (walk) 0.8f else 1.5f
+        val holdMs = if (walk) 10_000L else 8_000L
+        val v = loc.speed
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!autoPaused) {
+            if (v < stopBelow) {
+                if (slowSinceMs == 0L) slowSinceMs = now
+                if (now - slowSinceMs >= holdMs) {
+                    elapsedBeforeRun += System.currentTimeMillis() - runStartedAt
+                    autoPaused = true
+                    speedKmh = 0f
+                    smoothKmh = 0f
+                    lastLocation = null
+                    gpsStatus = "Jeda otomatis"
+                }
+            } else {
+                slowSinceMs = 0L
+            }
+        } else if (v >= goAbove) {
+            leaveAutoPause()
+        }
+        if (autoPaused) {
+            speedKmh = 0f
+            smoothKmh = 0f
+            gpsStatus = "Jeda otomatis"
+        }
+        return autoPaused
+    }
+
+    private fun leaveAutoPause() {
+        autoPaused = false
+        slowSinceMs = 0L
+        smoothKmh = 0f
+        resetFilter()
+        runStartedAt = System.currentTimeMillis()
+        lastLocation = null
+    }
+
     fun onLocation(raw: Location) {
         // Abaikan titik lama (basi) yang kadang dikirim sistem.
         if (raw.elapsedRealtimeNanos > 0L) {
@@ -302,6 +364,7 @@ object TrackerState {
         gpsStatus = gpsLabel(location.accuracy)
         lastFix = location
         if (!running || paused) return
+        if (autoPauseStep(raw)) return
         checkRoute(location)
         location = smooth(raw)
 
@@ -501,6 +564,9 @@ object TrackerState {
         gpsStatus = "Aktivitas dijeda"
         running = true
         paused = true
+        autoPaused = false
+        slowSinceMs = 0L
+        autoPause = c.getSharedPreferences("bike_history", Context.MODE_PRIVATE).getBoolean("auto_pause", true)
         return true
     }
 }
