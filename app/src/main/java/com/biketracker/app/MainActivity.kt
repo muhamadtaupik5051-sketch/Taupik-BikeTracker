@@ -320,35 +320,8 @@ class MainActivity : Activity() {
         outer.requestApplyInsets()
     }
 
-    private fun navBar(sel: Int): LinearLayout {
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = box(t.surface, 0)
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
-        listOf("⌂" to "Beranda", "⌖" to "Routes", "▶" to "Mulai", "▤" to "Riwayat", "⚙" to "Atur")
-            .forEachIndexed { i, (ic, label) ->
-                val c = if (i == sel) t.accent else t.muted
-                val cell = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(6), 0, dp(6))
-                    setOnClickListener {
-                        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showMulai(); 3 -> showHistory(); else -> showSettings() }
-                    }
-                }
-                if (i == 2) {
-                    cell.addView(tv(ic, 16f, onColor(t.accent), true).apply {
-                        gravity = Gravity.CENTER
-                        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (i == sel) t.accent else t.muted) }
-                    }, LinearLayout.LayoutParams(dp(34), dp(34)))
-                } else {
-                    cell.addView(tv(ic, 20f, c, true).apply { gravity = Gravity.CENTER })
-                }
-                cell.addView(tv(label, 10f, c, i == sel).apply { gravity = Gravity.CENTER })
-                bar.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
-            }
-        return bar
+    private fun navBar(sel: Int): LinearLayout = buildNavBar(this, t, sel) { i ->
+        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showMulai(); 3 -> showHistory(); else -> showSettings() }
     }
 
     private fun title(r: LinearLayout, small: String, big: String) {
