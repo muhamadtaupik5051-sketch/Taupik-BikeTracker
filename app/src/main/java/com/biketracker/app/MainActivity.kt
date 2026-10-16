@@ -1760,6 +1760,25 @@ class MainActivity : Activity() {
             }, 6)
             r.add(e, 12)
         } else {
+            // Rekor pribadi dari riwayat yang sedang ditampilkan (mengikuti filter aktivitas).
+            val recs = shown.map { it.second }
+            val farthest = recs.maxOf { it.km }
+            val longest = recs.maxOf { it.elapsed }
+            val totalMs = recs.sumOf { it.elapsed }
+            r.add(tv("REKOR PRIBADI", 11f, t.muted, true), 16)
+            statRow(r, statCard("Jarak terjauh", Fmt.dec(farthest, 2) + " km", t.accent),
+                statCard("Durasi terlama", formatTime(longest)), 8)
+            val extra = when (filter) {
+                "Lari" -> {
+                    val best = recs.mapNotNull { rc -> if (rc.km >= 1f) rc.paceSec else null }.minOrNull()
+                    statCard("Pace terbaik", Fmt.pace(best) + " /km", t.good)
+                }
+                "Jalan" -> statCard("Langkah terbanyak", Fmt.int(recs.maxOf { it.steps }), t.good)
+                "Sepeda" -> statCard("Rata-rata tercepat", Fmt.dec(recs.maxOf { it.avgF }, 1) + " km/jam", t.good)
+                else -> statCard("Rata-rata jarak", Fmt.dec(recs.sumOf { it.km.toDouble() } / recs.size, 2) + " km", t.good)
+            }
+            statRow(r, statCard("Total durasi", formatTime(totalMs)), extra, 8)
+            r.add(tv("RIWAYAT", 11f, t.muted, true), 16)
             for ((idx, rec) in shown) {
                 r.add(tripCard(rec, true, { showDetail(idx, rec) }) {
                     confirm("Hapus perjalanan ini?") {
@@ -1936,6 +1955,7 @@ class MainActivity : Activity() {
         r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
         r.add(btn("⇩   Cadangkan riwayat", t.surface) { exportHistory() }, 8, 0f, dp(52))
         r.add(btn("⇧   Pulihkan riwayat dari file", t.surface) { importHistoryPick() }, 8, 0f, dp(52))
+        r.add(btn("▤   Ekspor riwayat (CSV untuk Excel/Sheets)", t.surface) { exportCsv() }, 8, 0f, dp(52))
         val ignoring = batteryIgnored()
         r.add(btn("Hemat baterai: " + (if (ignoring) "DIKECUALIKAN (baik)" else "BELUM DIKECUALIKAN — ketuk untuk atur"), t.surface) {
             openBatterySettings()
@@ -1960,6 +1980,30 @@ class MainActivity : Activity() {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
         FileOut.saveAndShare(this, "RideTrack_riwayat_$stamp.txt", "text/plain",
             list.joinToString("\n"), "Cadangkan riwayat")
+    }
+
+    /** Riwayat sebagai tabel CSV: satu baris per aktivitas, angka memakai titik desimal supaya terbaca di Excel/Sheets. */
+    private fun exportCsv() {
+        val recs = rawRecords().mapNotNull { parse(it) }
+        if (recs.isEmpty()) {
+            Toast.makeText(this, "Belum ada riwayat untuk diekspor.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sb = StringBuilder("tanggal,aktivitas,jarak_km,durasi_detik,kecepatan_rata2_kmh,kecepatan_maks_kmh,kalori,tanjakan_m,langkah\n")
+        for (rc in recs) {
+            sb.append(rc.date).append(',')
+                .append(rc.mode).append(',')
+                .append(String.format(Locale.US, "%.3f", rc.km)).append(',')
+                .append(rc.elapsed / 1000L).append(',')
+                .append(rc.avg).append(',')
+                .append(rc.maxSpeed).append(',')
+                .append(rc.kcal).append(',')
+                .append(rc.climb).append(',')
+                .append(if (rc.mode == "Jalan") rc.steps.toString() else "")
+                .append('\n')
+        }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+        FileOut.saveAndShare(this, "RideTrack_riwayat_$stamp.csv", "text/csv", sb.toString(), "Ekspor CSV")
     }
 
     private fun importHistoryPick() {
