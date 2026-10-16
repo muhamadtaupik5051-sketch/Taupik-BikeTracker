@@ -3,8 +3,13 @@ package com.biketracker.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.location.Location
@@ -59,6 +64,168 @@ internal class Rec(val f: List<String>) {
             val la = p.getOrNull(0)?.toDoubleOrNull()
             val lo = p.getOrNull(1)?.toDoubleOrNull()
             if (la != null && lo != null) doubleArrayOf(la, lo) else null
+        }
+    }
+}
+
+/**
+ * Database riwayat (SQLite bawaan Android, tanpa pustaka tambahan).
+ * Isi tiap baris tetap memakai format teks lama (lihat Rec) supaya cadangan/pulihkan riwayat dan semua layar tetap cocok.
+ */
+internal class RecordDb(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "ridetrack.db", null, 1) {
+    override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE records (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, mode TEXT NOT NULL, line TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX idx_records_date ON records(date)")
+        db.execSQL("CREATE INDEX idx_records_mode ON records(mode)")
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+}
+
+/**
+ * Akses riwayat. Menyimpan satu aktivitas = satu INSERT (bukan menulis ulang seluruh riwayat), dan hapus = satu DELETE.
+ * Riwayat lama di SharedPreferences dipindah otomatis sekali; teks lamanya TIDAK dihapus sebagai cadangan
+ * (baru dihapus saat "Hapus semua riwayat"). Kalau database gagal dibuka, penyimpanan lama dipakai sebagai cadangan
+ * sehingga riwayat tidak pernah tampak hilang.
+ */
+internal class RecordStore(private val ctx: Context, private val prefs: SharedPreferences) {
+    private val helper by lazy { RecordDb(ctx) }
+    private var cache: List<String>? = null
+    private var ready = false
+
+    init {
+        migrate()
+    }
+
+    private fun legacy(): MutableList<String> =
+        (prefs.getString("records", "") ?: "").lines().filter { it.isNotBlank() }.toMutableList()
+
+    private fun rowCount(db: SQLiteDatabase): Long {
+        db.rawQuery("SELECT COUNT(*) FROM records", null).use { c ->
+            return if (c.moveToFirst()) c.getLong(0) else 0L
+        }
+    }
+
+    private fun insert(db: SQLiteDatabase, line: String): Boolean {
+        val f = line.split("|")
+        val cv = ContentValues()
+        cv.put("date", f.getOrElse(0) { "" })
+        cv.put("mode", f.getOrElse(1) { "" })
+        cv.put("line", line)
+        return db.insert("records", null, cv) != -1L
+    }
+
+    /** Pindahkan riwayat lama sekali saja. Hanya ditandai selesai kalau jumlah baris di database sudah cocok. */
+    private fun migrate() {
+        try {
+            val old = legacy()
+            val db = helper.writableDatabase
+            if (!prefs.getBoolean("records_migrated", false)) {
+                if (old.isNotEmpty() && rowCount(db) == 0L) {
+                    db.beginTransaction()
+                    try {
+                        // Riwayat lama terbaru di depan; masukkan dari yang terlama supaya urutan id mengikuti waktu.
+                        for (l in old.asReversed()) insert(db, l)
+                        if (rowCount(db) == old.size.toLong()) db.setTransactionSuccessful()
+                    } finally {
+                        db.endTransaction()
+                    }
+                }
+                if (old.isEmpty() || rowCount(db) >= old.size.toLong()) {
+                    prefs.edit().putBoolean("records_migrated", true).apply()
+                }
+            }
+            ready = prefs.getBoolean("records_migrated", false)
+        } catch (e: Exception) {
+            ready = false
+        }
+    }
+
+    /** Semua baris, terbaru di depan. */
+    fun all(): MutableList<String> {
+        if (!ready) return legacy()
+        cache?.let { return it.toMutableList() }
+        val out = ArrayList<String>()
+        try {
+            helper.readableDatabase.rawQuery("SELECT line FROM records ORDER BY date DESC, id DESC", null).use { c ->
+                while (c.moveToNext()) out.add(c.getString(0))
+            }
+        } catch (e: Exception) {
+            return legacy()
+        }
+        cache = out
+        return out.toMutableList()
+    }
+
+    fun add(line: String): Boolean {
+        cache = null
+        if (!ready) {
+            val list = legacy()
+            list.add(0, line)
+            prefs.edit().putString("records", list.joinToString("\n")).apply()
+            return true
+        }
+        return try {
+            insert(helper.writableDatabase, line)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Hapus satu aktivitas (yang terbaru bila ada dua baris identik). */
+    fun delete(line: String) {
+        cache = null
+        if (!ready) {
+            val list = legacy()
+            list.remove(line)
+            prefs.edit().putString("records", list.joinToString("\n")).apply()
+            return
+        }
+        try {
+            helper.writableDatabase.execSQL(
+                "DELETE FROM records WHERE id = (SELECT id FROM records WHERE line = ? ORDER BY id DESC LIMIT 1)",
+                arrayOf<Any>(line)
+            )
+        } catch (e: Exception) {
+        }
+    }
+
+    /** Tambah banyak baris sekaligus (pulihkan dari file); baris yang sudah ada dilewati. Mengembalikan jumlah yang ditambah. */
+    fun addNew(lines: List<String>): Int {
+        val have = HashSet<String>(all())
+        var n = 0
+        if (!ready) {
+            val list = legacy()
+            for (l in lines) if (have.add(l)) { list.add(l); n++ }
+            if (n > 0) prefs.edit().putString("records", list.joinToString("\n")).apply()
+            cache = null
+            return n
+        }
+        try {
+            val db = helper.writableDatabase
+            db.beginTransaction()
+            try {
+                for (l in lines) if (have.add(l) && insert(db, l)) n++
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (e: Exception) {
+            n = 0
+        }
+        cache = null
+        return n
+    }
+
+    /** Hapus semua riwayat, termasuk salinan lama di SharedPreferences. */
+    fun clear() {
+        cache = null
+        prefs.edit().remove("records").apply()
+        if (ready) {
+            try {
+                helper.writableDatabase.delete("records", null, null)
+            } catch (e: Exception) {
+            }
         }
     }
 }
@@ -148,6 +315,7 @@ class MainActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("bike_history", MODE_PRIVATE) }
+    private val store by lazy { RecordStore(this, prefs) }
 
     private val timer = object : Runnable {
         override fun run() {
@@ -380,16 +548,11 @@ class MainActivity : Activity() {
     }
 
     // ---------- Data ----------
-    private fun rawRecords(): MutableList<String> =
-        (prefs.getString("records", "") ?: "").lines().filter { it.isNotBlank() }.toMutableList()
+    private fun rawRecords(): MutableList<String> = store.all()
 
     private fun parse(line: String): Rec? {
         val f = line.split("|")
         return if (f.size >= 6) Rec(f) else null
-    }
-
-    private fun writeRecords(list: List<String>) {
-        prefs.edit().putString("records", list.joinToString("\n")).apply()
     }
 
     /** Jumlah hari berturut-turut ada aktivitas untuk mode ini, dihitung mundur dari hari ini (atau kemarin). */
@@ -1435,7 +1598,7 @@ class MainActivity : Activity() {
 
     private fun encodeRoute(): String {
         if (route.isEmpty()) return ""
-        val step = maxOf(1, Math.ceil(route.size / 300.0).toInt())
+        val step = maxOf(1, Math.ceil(route.size / 800.0).toInt())
         val sb = StringBuilder()
         var i = 0
         while (i < route.size) {
@@ -1482,9 +1645,9 @@ class MainActivity : Activity() {
             encodeSamples().second.toString(),
             encodeSamples().first
         ).joinToString("|")
-        val list = rawRecords()
-        list.add(0, record)
-        writeRecords(list)
+        if (!store.add(record)) {
+            Toast.makeText(this, "Gagal menyimpan aktivitas ke riwayat.", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun showSummary(elapsed: Long) {
@@ -1584,9 +1747,7 @@ class MainActivity : Activity() {
             for ((idx, rec) in shown) {
                 r.add(tripCard(rec, true, { showDetail(idx, rec) }) {
                     confirm("Hapus perjalanan ini?") {
-                        val list = rawRecords()
-                        if (idx < list.size) list.removeAt(idx)
-                        writeRecords(list)
+                        store.delete(rec.f.joinToString("|"))
                         showHistory()
                     }
                 }, 8)
@@ -1596,7 +1757,7 @@ class MainActivity : Activity() {
             }, 10)
             r.add(btn("Hapus semua riwayat", t.bad) {
                 confirm("Hapus semua riwayat?") {
-                    prefs.edit().remove("records").apply(); showHistory()
+                    store.clear(); showHistory()
                 }
             }, 10, 0f, dp(48))
         }
@@ -1690,9 +1851,7 @@ class MainActivity : Activity() {
         r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         r.add(btn("Hapus perjalanan ini", t.bad) {
             confirm("Hapus perjalanan ini?") {
-                val list = rawRecords()
-                if (idx < list.size) list.removeAt(idx)
-                writeRecords(list)
+                store.delete(rec.f.joinToString("|"))
                 showHistory()
             }
         }, 10, 0f, dp(48))
@@ -1807,16 +1966,13 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         try {
             val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
-            val have = rawRecords()
-            val seen = HashSet<String>(have)
-            var added = 0
+            val candidates = ArrayList<String>()
             for (line in text.lines()) {
                 val l = line.trim()
-                if (l.isEmpty() || parse(l) == null || !seen.add(l)) continue
-                have.add(l)
-                added++
+                if (l.isEmpty() || parse(l) == null) continue
+                candidates.add(l)
             }
-            if (added > 0) writeRecords(have)
+            val added = store.addNew(candidates)
             Toast.makeText(this,
                 if (added > 0) "$added aktivitas dipulihkan" else "Tidak ada aktivitas baru di file itu",
                 Toast.LENGTH_LONG).show()
