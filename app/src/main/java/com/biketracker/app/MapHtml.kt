@@ -102,6 +102,10 @@ object MapHtml {
               <div id="map"></div>
               <div id="cmp" class="rb" style="top:56px"><svg id="cmpA" width="22" height="22" viewBox="0 0 22 22"><path d="M11 2 L16 12 L11 10 L6 12 Z" fill="#FF3B3B"/><path d="M11 20 L16 12 L11 10 L6 12 Z" fill="#E6EDF3"/></svg></div>
               <div id="hd" class="rb" style="top:96px">&#10148;</div>
+              <div id="elv" class="lb" style="left:52px;display:none;pointer-events:none;padding:5px 10px 3px;font-size:11px">
+                <div id="elv_t"></div>
+                <svg id="elv_g" width="110" height="26"></svg>
+              </div>
               <div id="lb" class="lb">
                 <div class="t" onclick="lbToggle()">&#128506;</div>
                 <div class="m">
@@ -292,7 +296,10 @@ object MapHtml {
                   trailsOn = !trailsOn; applyBase();
                   try { localStorage.setItem('rt_trails', trailsOn ? '1' : '0'); } catch (e) { }
                 }
-                function lbToggle() { document.getElementById('lb').classList.toggle('open'); }
+                function lbToggle() {
+                  var o = document.getElementById('lb').classList.toggle('open');
+                  document.getElementById('elv').style.visibility = o ? 'hidden' : 'visible';
+                }
 
                 // Tombol lokasi: kembali mengikuti posisi, atau tampilkan seluruh rute.
                 function locate() {
@@ -354,6 +361,7 @@ object MapHtml {
                   if (map.touchRotate) map.touchRotate.disable();
                   cmpEl().style.display = 'none'; hdEl().style.display = 'none';
                   document.getElementById('lb').style.display = 'none';
+                  document.getElementById('elv').style.display = 'none';
                 }
 
                 // ---- Rencana rute manual: ketuk peta untuk menambah titik yang akan dilewati ----
@@ -437,7 +445,56 @@ object MapHtml {
                   return d;
                 }
 
+                // Tanjakan/turunan rute rencana (data tinggi dari Open-Meteo, resolusi sekitar 90 m).
+                var elvTimer = null, elvReq = 0;
+                function elevUpdate() {
+                  clearTimeout(elvTimer);
+                  var box = document.getElementById('elv');
+                  if (!box) { return; }
+                  var g = plan.line.getLatLngs();
+                  if (g.length < 2 || plan.wps.length < 2) { box.style.display = 'none'; return; }
+                  elvTimer = setTimeout(function () { elevFetch(g); }, 700);
+                }
+                function elevFetch(g) {
+                  var my = ++elvReq;
+                  var cum = [0];
+                  for (var i = 1; i < g.length; i++) { cum.push(cum[i - 1] + map.distance(g[i - 1], g[i])); }
+                  var total = cum[cum.length - 1];
+                  if (total < 50) { return; }
+                  var n = Math.min(100, Math.max(2, Math.round(total / 100) + 1));
+                  var la = [], lo = [], j = 0;
+                  for (var k = 0; k < n; k++) {
+                    var want = total * k / (n - 1);
+                    while (j < cum.length - 2 && cum[j + 1] < want) { j++; }
+                    var seg = cum[j + 1] - cum[j];
+                    var t = seg > 0 ? (want - cum[j]) / seg : 0;
+                    la.push((g[j].lat + (g[j + 1].lat - g[j].lat) * t).toFixed(5));
+                    lo.push((g[j].lng + (g[j + 1].lng - g[j].lng) * t).toFixed(5));
+                  }
+                  fetch('https://api.open-meteo.com/v1/elevation?latitude=' + la.join(',') + '&longitude=' + lo.join(','))
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) { if (my === elvReq && d.elevation && d.elevation.length > 1) { elevShow(d.elevation); } })
+                    .catch(function () { });
+                }
+                function elevShow(e) {
+                  var s = e.map(function (v, i) { return (e[Math.max(0, i - 1)] + v + e[Math.min(e.length - 1, i + 1)]) / 3; });
+                  var up = 0, dn = 0, mn = s[0], mx = s[0];
+                  for (var i = 1; i < s.length; i++) {
+                    var d = s[i] - s[i - 1];
+                    if (d > 0) { up += d; } else { dn -= d; }
+                    mn = Math.min(mn, s[i]); mx = Math.max(mx, s[i]);
+                  }
+                  var w = 110, h = 26, rng = Math.max(mx - mn, 5), pts = [];
+                  for (var m = 0; m < s.length; m++) {
+                    pts.push((m / (s.length - 1) * w).toFixed(1) + ',' + (h - 2 - (s[m] - mn) / rng * (h - 4)).toFixed(1));
+                  }
+                  document.getElementById('elv_t').innerHTML = '&#9650; ' + Math.round(up) + ' m &nbsp; &#9660; ' + Math.round(dn) + ' m';
+                  document.getElementById('elv_g').innerHTML = '<polyline fill="none" stroke="' + ACCENT + '" stroke-width="2" points="' + pts.join(' ') + '"/>';
+                  document.getElementById('elv').style.display = 'block';
+                }
+
                 function report(snapped, err) {
+                  elevUpdate();
                   Bridge.onPlan(plan.dist, plan.wps.length, snapped, err, JSON.stringify(plan.wps));
                   try {
                     var g = plan.line.getLatLngs();
