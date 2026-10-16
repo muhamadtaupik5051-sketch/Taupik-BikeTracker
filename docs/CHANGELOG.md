@@ -16,4 +16,3 @@
 - Peta memuat Leaflet dari dalam aplikasi lebih dulu (CDN jadi cadangan).
 - Pengingat satu kali untuk mengecualikan aplikasi dari penghematan baterai.
 - Build: varian **release** (R8) + **AAB**, nomor versi otomatis, unit test, lint, Gradle wrapper, ikon adaptif, ikon notifikasi sendiri, aturan cadangan Android.
-- 
