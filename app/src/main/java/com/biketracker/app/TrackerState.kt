@@ -104,6 +104,7 @@ object TrackerState {
             routeEvent = 2
         }
     }
+    /** Titik rute: [lat, lon, tinggi (NaN bila tidak ada), waktu epoch ms]. Kode lama cukup membaca indeks 0 dan 1. */
     val route = mutableListOf<DoubleArray>()
     /** Waktu (detik) tiap kilometer penuh yang sudah diselesaikan. */
     val splits = mutableListOf<Int>()
@@ -163,6 +164,8 @@ object TrackerState {
     }
 
     fun start(targetValue: Int) {
+        bumpGeneration()
+        resetFilter()
         target = targetValue
         smoothKmh = 0f
         splits.clear()
@@ -200,6 +203,7 @@ object TrackerState {
         if (!running || !paused) return
         paused = false
         smoothKmh = 0f
+        resetFilter()
         runStartedAt = System.currentTimeMillis()
         lastLocation = null
         gpsStatus = "Menunggu lokasi…"
@@ -207,6 +211,7 @@ object TrackerState {
 
     /** Menghentikan pelacakan; angka terakhir tetap tersimpan di sini untuk layar ringkasan. */
     fun finish(elapsed: Long) {
+        bumpGeneration()
         elapsedBeforeRun = elapsed
         running = false
         paused = false
@@ -250,6 +255,12 @@ object TrackerState {
     private var kLng = 0.0
     private var kVar = -1f
     private var kTime = 0L
+
+    /** Filter dimulai dari awal lagi supaya titik pertama tidak tertarik posisi lama (aktivitas baru atau setelah jeda). */
+    private fun resetFilter() {
+        kVar = -1f
+        kTime = 0L
+    }
 
     /** Label kualitas sinyal berdasarkan akurasi dalam meter. */
     fun gpsLabel(acc: Float): String {
@@ -348,7 +359,13 @@ object TrackerState {
             val base = if (route.size > 8000) 15f else if (route.size > 4000) 8f else 3f
             moved = !still && res[0] >= maxOf(base, location.accuracy)
         }
-        if (moved && route.size < 12000) route.add(doubleArrayOf(location.latitude, location.longitude))
+        if (moved && route.size < 12000) {
+            route.add(doubleArrayOf(
+                location.latitude, location.longitude,
+                if (location.hasAltitude()) location.altitude else Double.NaN,
+                location.time.toDouble()
+            ))
+        }
 
         if (location.hasAltitude()) {
             val alt = location.altitude
@@ -368,31 +385,74 @@ object TrackerState {
     private fun sp(c: Context) =
         c.applicationContext.getSharedPreferences("session", Context.MODE_PRIVATE)
 
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val lock = Any()
+    private var generation = 0
+
+    /** Setiap sesi baru atau selesai menaikkan angka ini, supaya simpanan latar belakang yang basi dibuang. */
+    private fun bumpGeneration() {
+        synchronized(lock) { generation++ }
+    }
+
+    /**
+     * Simpan sesi ke penyimpanan. Data dicuplik di main thread, tetapi teks rute yang panjang
+     * disusun dan ditulis di thread latar belakang supaya layar tidak tersendat.
+     */
     fun persist(c: Context) {
         if (!running) return
-        val sb = StringBuilder()
-        for ((i, p) in route.withIndex()) {
-            if (i > 0) sb.append(';')
-            sb.append(String.format(Locale.US, "%.6f,%.6f", p[0], p[1]))
+        val ctx = c.applicationContext
+        val g = synchronized(lock) { generation }
+        val pts = ArrayList(route)
+        val modeNow = mode
+        val targetNow = target
+        val splitsText = splits.joinToString(",")
+        val splitStart = splitStartElapsed
+        val moving = movingMs
+        val every = sampleEveryMs
+        val samplesText = speedSamples.joinToString(",") { String.format(Locale.US, "%.1f", it) }
+        val dist = distanceMeters
+        val maxKmh = maxSpeedKmh
+        val elapsed = currentElapsed()
+        val climb = climbM
+        val pausedNow = paused
+        io.execute {
+            val sb = StringBuilder()
+            for ((i, p) in pts.withIndex()) {
+                if (i > 0) sb.append(';')
+                sb.append(String.format(Locale.US, "%.6f,%.6f", p[0], p[1]))
+                if (p.size >= 4) {
+                    sb.append(',')
+                    if (!p[2].isNaN()) sb.append(String.format(Locale.US, "%.1f", p[2]))
+                    sb.append(',').append(p[3].toLong())
+                }
+            }
+            val routeText = sb.toString()
+            synchronized(lock) {
+                if (g != generation) return@execute
+                sp(ctx).edit()
+                    .putBoolean("active", true)
+                    .putBoolean("paused", pausedNow)
+                    .putString("mode", modeNow)
+                    .putInt("target", targetNow)
+                    .putString("splits", splitsText)
+                    .putLong("splitStart", splitStart)
+                    .putLong("moving", moving)
+                    .putLong("sampleEvery", every)
+                    .putString("samples", samplesText)
+                    .putFloat("dist", dist)
+                    .putFloat("max", maxKmh)
+                    .putLong("elapsed", elapsed)
+                    .putFloat("climb", climb)
+                    .putString("route", routeText)
+                    .apply()
+            }
         }
-        sp(c).edit()
-            .putBoolean("active", true)
-            .putString("mode", mode)
-            .putInt("target", target)
-            .putString("splits", splits.joinToString(","))
-            .putLong("splitStart", splitStartElapsed)
-            .putLong("moving", movingMs)
-            .putLong("sampleEvery", sampleEveryMs)
-            .putString("samples", speedSamples.joinToString(",") { String.format(Locale.US, "%.1f", it) })
-            .putFloat("dist", distanceMeters)
-            .putFloat("max", maxSpeedKmh)
-            .putLong("elapsed", currentElapsed())
-            .putFloat("climb", climbM)
-            .putString("route", sb.toString())
-            .apply()
     }
 
     fun hasSaved(c: Context): Boolean = sp(c).getBoolean("active", false)
+
+    /** Apakah sesi tersimpan terakhir dalam keadaan dijeda (dipakai saat service dihidupkan ulang sistem). */
+    fun savedPaused(c: Context): Boolean = sp(c).getBoolean("paused", false)
 
     fun clearSaved(c: Context) {
         sp(c).edit().clear().apply()
@@ -402,6 +462,8 @@ object TrackerState {
     fun restore(c: Context): Boolean {
         val p = sp(c)
         if (!p.getBoolean("active", false)) return false
+        bumpGeneration()
+        resetFilter()
         mode = p.getString("mode", "Sepeda") ?: "Sepeda"
         target = p.getInt("target", 10)
         distanceMeters = p.getFloat("dist", 0f)
@@ -413,7 +475,11 @@ object TrackerState {
             val q = s.split(",")
             val la = q.getOrNull(0)?.toDoubleOrNull()
             val lo = q.getOrNull(1)?.toDoubleOrNull()
-            if (la != null && lo != null) route.add(doubleArrayOf(la, lo))
+            if (la != null && lo != null) {
+                val ele = q.getOrNull(2)?.toDoubleOrNull() ?: Double.NaN
+                val tm = q.getOrNull(3)?.toLongOrNull()
+                route.add(if (tm != null) doubleArrayOf(la, lo, ele, tm.toDouble()) else doubleArrayOf(la, lo))
+            }
         }
         splits.clear()
         for (x in (p.getString("splits", "") ?: "").split(",")) {
