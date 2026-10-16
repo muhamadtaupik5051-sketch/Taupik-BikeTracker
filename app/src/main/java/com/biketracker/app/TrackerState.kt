@@ -357,7 +357,9 @@ object TrackerState {
             if (ageMs > 10_000L) return
         }
         var location: Location = raw
-        if (location.accuracy > 25f) {
+        // Akurasi nol/tidak valid bukanlah fix yang dapat dipercaya. Abaikan juga fix
+        // yang terlalu kasar agar tidak mengotori jarak, kecepatan, grafik, dan rute.
+        if (location.accuracy <= 0f || location.accuracy > 25f) {
             gpsStatus = "Mencari GPS…"
             return
         }
