@@ -421,7 +421,7 @@ class MapPanel(
     private fun guideDialog() {
         val plans = loadPlans()
         if (plans.isEmpty()) {
-            Toast.makeText(context, "Belum ada rute. Buat dulu di menu Routes lalu Simpan rute.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Belum ada rute. Buat dulu di menu Rute lalu Simpan rute.", Toast.LENGTH_LONG).show()
             return
         }
         val names = ArrayList<String>()
