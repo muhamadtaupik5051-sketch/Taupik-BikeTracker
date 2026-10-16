@@ -293,7 +293,7 @@ class MapActivity : Activity() {
             settings.domStorageEnabled = true
             MapHtml.applyCache(this)
             addJavascriptInterface(Bridge(), "Bridge")
-            webViewClient = WebViewClient()
+            webViewClient = MapHtml.client(this@MapActivity)
             // Geser di dalam peta menggeser peta; geser dari tepi kiri/kanan pindah ke halaman Survei.
             setOnTouchListener { v, e ->
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
