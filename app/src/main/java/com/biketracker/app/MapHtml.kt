@@ -77,6 +77,15 @@ object MapHtml {
                       align-items: center; justify-content: center; font: 700 14px sans-serif;
                       box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
                 .rb.on { background: #1E90FF; }
+                .lb { position: absolute; left: 10px; top: 176px; z-index: 1000; border-radius: 14px;
+                      background: rgba(20,28,36,0.92); color: #fff; font: 600 12px sans-serif;
+                      box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
+                .lb .t { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+                .lb .m { display: none; padding: 2px 6px 6px; }
+                .lb.open .m { display: block; }
+                .lb .h { padding: 6px 8px 2px; font-size: 10px; opacity: 0.65; }
+                .lb .o { padding: 8px 10px; border-radius: 9px; white-space: nowrap; }
+                .lb .o.on { background: #1E90FF; }
                 .gps { position: relative; width: 28px; height: 28px; }
                 .gps b { position: absolute; left: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%;
                          background: #1565FF; border: 3px solid #ffffff; box-sizing: border-box;
@@ -90,9 +99,20 @@ object MapHtml {
               <div id="map"></div>
               <div id="cmp" class="rb" style="top:56px"><svg id="cmpA" width="22" height="22" viewBox="0 0 22 22"><path d="M11 2 L16 12 L11 10 L6 12 Z" fill="#FF3B3B"/><path d="M11 20 L16 12 L11 10 L6 12 Z" fill="#E6EDF3"/></svg></div>
               <div id="hd" class="rb" style="top:96px">&#10148;</div>
+              <div id="lb" class="lb">
+                <div class="t" onclick="lbToggle()">&#128506;</div>
+                <div class="m">
+                  <div class="h">GAYA PETA</div>
+                  <div class="o" id="st_osm" onclick="setStyle('osm')">Standar</div>
+                  <div class="o" id="st_topo" onclick="setStyle('topo')">Medan (kontur)</div>
+                  <div class="o" id="st_cyclo" onclick="setStyle('cyclo')">Sepeda</div>
+                  <div class="h">LAPISAN</div>
+                  <div class="o" id="ov_trails" onclick="toggleTrails()">Jalur sepeda</div>
+                </div>
+              </div>
               <script>
                 var map = null, route = null, routeCase = null, marker = null, startPin = null, endPin = null;
-                var osm = null, sat = null, follow = true, recording = false, pinned = false, refollowTimer = null;
+                var osm = null, sat = null, topo = null, cyclo = null, trails = null, mapStyle = 'osm', satOn = false, trailsOn = false, follow = true, recording = false, pinned = false, refollowTimer = null;
                 var ACCENT = '$accentHex';
                 var ROUTE_COLOR = '#00E5FF';
                 var rotOk = false, headingMode = false, compactMap = false;
@@ -173,6 +193,24 @@ object MapHtml {
                     maxZoom: 19,
                     attribution: 'Tiles &copy; Esri'
                   });
+                  topo = L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19, maxNativeZoom: 17,
+                    attribution: '&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap (CC-BY-SA)'
+                  });
+                  cyclo = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+                    maxZoom: 19, subdomains: 'abc',
+                    attribution: '&copy; OpenStreetMap contributors | CyclOSM'
+                  });
+                  trails = L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
+                    maxZoom: 19, maxNativeZoom: 18, opacity: 0.85, zIndex: 5,
+                    attribution: 'Jalur: Waymarked Trails'
+                  });
+                  try {
+                    var ms = localStorage.getItem('rt_style');
+                    if (ms === 'topo' || ms === 'cyclo') { mapStyle = ms; }
+                    if (localStorage.getItem('rt_trails') === '1') { trailsOn = true; }
+                  } catch (e) { }
+                  applyBase();
                   map.on('dragstart', function () { follow = false; if (refollowTimer) { clearTimeout(refollowTimer); refollowTimer = null; } });
                   // Saat merekam, peta otomatis kembali mengikuti posisi 8 detik setelah disentuh.
                   map.on('dragend', function () {
@@ -225,12 +263,32 @@ object MapHtml {
                   'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'
                 ], 0);
 
-                // Ganti tampilan peta: 'osm' (Peta) atau 'sat' (Satelit).
-                function setLayer(n) {
+                // Ganti tampilan peta: 'osm' (Peta) atau 'sat' (Satelit). Gaya Peta bisa
+                // Standar / Medan / Sepeda lewat tombol di kiri (setStyle).
+                function applyBase() {
                   if (!map) return;
-                  if (n === 'sat') { if (map.hasLayer(osm)) map.removeLayer(osm); if (!map.hasLayer(sat)) sat.addTo(map); }
-                  else { if (map.hasLayer(sat)) map.removeLayer(sat); if (!map.hasLayer(osm)) osm.addTo(map); }
+                  var want = satOn ? sat : (mapStyle === 'topo' ? topo : (mapStyle === 'cyclo' ? cyclo : osm));
+                  [osm, topo, cyclo, sat].forEach(function (l) { if (l && l !== want && map.hasLayer(l)) map.removeLayer(l); });
+                  if (!map.hasLayer(want)) { want.addTo(map); }
+                  if (trailsOn) { if (!map.hasLayer(trails)) { trails.addTo(map); } }
+                  else if (map.hasLayer(trails)) { map.removeLayer(trails); }
+                  ['osm', 'topo', 'cyclo'].forEach(function (k) {
+                    var e = document.getElementById('st_' + k);
+                    if (e) { e.className = 'o' + ((!satOn && mapStyle === k) ? ' on' : ''); }
+                  });
+                  var ot = document.getElementById('ov_trails');
+                  if (ot) { ot.className = 'o' + (trailsOn ? ' on' : ''); }
                 }
+                function setLayer(n) { satOn = (n === 'sat'); applyBase(); }
+                function setStyle(n) {
+                  mapStyle = n; satOn = false; applyBase();
+                  try { localStorage.setItem('rt_style', n); } catch (e) { }
+                }
+                function toggleTrails() {
+                  trailsOn = !trailsOn; applyBase();
+                  try { localStorage.setItem('rt_trails', trailsOn ? '1' : '0'); } catch (e) { }
+                }
+                function lbToggle() { document.getElementById('lb').classList.toggle('open'); }
 
                 // Tombol lokasi: kembali mengikuti posisi, atau tampilkan seluruh rute.
                 function locate() {
@@ -291,6 +349,7 @@ object MapHtml {
                   compactMap = true;
                   if (map.touchRotate) map.touchRotate.disable();
                   cmpEl().style.display = 'none'; hdEl().style.display = 'none';
+                  document.getElementById('lb').style.display = 'none';
                 }
 
                 // ---- Rencana rute manual: ketuk peta untuk menambah titik yang akan dilewati ----
