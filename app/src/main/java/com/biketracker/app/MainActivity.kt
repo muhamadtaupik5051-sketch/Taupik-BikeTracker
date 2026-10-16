@@ -595,7 +595,7 @@ class MainActivity : Activity() {
             box1.addView(mono(tv(v, 14f, col, true)), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
             sumRow.addView(box1, LinearLayout.LayoutParams(0, -2, 1f).apply { if (!first) leftMargin = dp(8) })
         }
-        mini("Target tercapai", "$hit dari ${today + 1} hari", if (hit > 0) t.good else t.text, true)
+        mini("Target tercapai", "$hit/${today + 1} hari", if (hit > 0) t.good else t.text, true)
         mini("Hari terbaik", if (bestI >= 0) dayNames[bestI] + " · " + fv(week[bestI]) else "-", a, false)
         mini("Rata-rata/hari aktif", if (active > 0) fv(avgActive) else "-", t.text, false)
         wc.add(sumRow, 12)
@@ -1091,7 +1091,9 @@ class MainActivity : Activity() {
         }
         outer.addView(header)
         outer.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-        outer.addView(row)
+        // Beranda tidak perlu tombol Mulai (sudah ada tab Mulai). Tombol tetap tampil di layar Mulai
+        // dan saat sedang merekam (SELESAI / JEDA).
+        if (running || mulaiScreen) outer.addView(row)
         outer.addView(navBar(if (mulaiScreen) 2 else 0))
         setContentView(outer)
         outer.requestApplyInsets()
