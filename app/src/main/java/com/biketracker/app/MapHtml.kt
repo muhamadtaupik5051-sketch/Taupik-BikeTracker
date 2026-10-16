@@ -395,17 +395,35 @@ object MapHtml {
                   report(false, false);
                   if (!plan.road || pts.length < 2) { return; }
                   var coords = pts.map(function (p) { return p[1] + ',' + p[0]; }).join(';');
-                  var prof = plan.profile === 'foot' ? 'routed-foot' : 'routed-bike';
-                  var url = 'https://routing.openstreetmap.de/' + prof + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
-                  fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+                  var main = plan.profile === 'foot' ? 'routed-foot' : 'routed-bike';
+                  var straight = straightDist(pts);
+                  function routeVia(prof) {
+                    var url = 'https://routing.openstreetmap.de/' + prof + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
+                    return fetch(url).then(function (r) { return r.json(); })
+                      .then(function (j) { return (j.routes && j.routes[0]) ? j.routes[0] : null; })
+                      .catch(function () { return null; });
+                  }
+                  function show(rt) {
+                    var c = rt.geometry.coordinates.map(function (q) { return [q[1], q[0]]; });
+                    plan.line.setLatLngs(c);
+                    plan.dist = rt.distance;
+                    report(true, false);
+                  }
+                  // Jika rute utama memutar terlalu jauh (jalan satu arah / jalan raya
+                  // tidak boleh dilewati sepeda), coba profil lain dan pakai yang terpendek.
+                  routeVia(main).then(function (best) {
                     if (id !== reqId) { return; }
-                    if (j.routes && j.routes[0]) {
-                      var c = j.routes[0].geometry.coordinates.map(function (q) { return [q[1], q[0]]; });
-                      plan.line.setLatLngs(c);
-                      plan.dist = j.routes[0].distance;
-                      report(true, false);
-                    } else { report(false, true); }
-                  }).catch(function () { if (id === reqId) { report(false, true); } });
+                    var detour = !best || (straight > 0 && best.distance > straight * 1.6 + 300);
+                    if (!detour) { show(best); return; }
+                    var others = ['routed-foot', 'routed-car'].filter(function (x) { return x !== main; });
+                    Promise.all(others.map(routeVia)).then(function (rs) {
+                      if (id !== reqId) { return; }
+                      rs.push(best);
+                      var pick = null;
+                      rs.forEach(function (r) { if (r && (!pick || r.distance < pick.distance)) { pick = r; } });
+                      if (pick) { show(pick); } else { report(false, true); }
+                    });
+                  });
                 }
 
                 // Titik survei: penanda oranye yang bisa dipilih.
