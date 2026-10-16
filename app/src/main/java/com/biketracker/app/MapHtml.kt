@@ -2,6 +2,41 @@ package com.biketracker.app
 
 /** Halaman HTML Leaflet yang dipakai MapActivity dan panel peta di layar tracking. */
 object MapHtml {
+    /** Alamat palsu yang dilayani dari folder assets/leaflet (diisi saat build oleh workflow). */
+    private const val LOCAL_HOST = "appassets.local"
+
+    /**
+     * WebViewClient yang menyajikan Leaflet dari assets lebih dulu supaya peta tidak bergantung CDN.
+     * Kalau berkas tidak ada di assets, hasilnya null dan halaman otomatis mencoba CDN.
+     */
+    fun client(ctx: android.content.Context): android.webkit.WebViewClient {
+        val app = ctx.applicationContext
+        return object : android.webkit.WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: android.webkit.WebView?,
+                request: android.webkit.WebResourceRequest?
+            ): android.webkit.WebResourceResponse? {
+                val u = request?.url ?: return null
+                if (u.host != LOCAL_HOST) return null
+                val path = (u.path ?: "").removePrefix("/")
+                if (!path.startsWith("leaflet/") || path.contains("..")) return null
+                return try {
+                    val text = path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".svg")
+                    val mime = when {
+                        path.endsWith(".js") -> "application/javascript"
+                        path.endsWith(".css") -> "text/css"
+                        path.endsWith(".png") -> "image/png"
+                        path.endsWith(".svg") -> "image/svg+xml"
+                        else -> "application/octet-stream"
+                    }
+                    android.webkit.WebResourceResponse(mime, if (text) "UTF-8" else null, app.assets.open(path))
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
     /**
      * Tanpa internet, peta memakai cache bagian yang pernah dibuka (lewat jalur yang sudah dilihat).
      * Tidak mengunduh peta massal, sesuai aturan penggunaan tile OpenStreetMap.
@@ -171,6 +206,7 @@ object MapHtml {
 
                 // Plugin putar peta (dua jari). Kalau gagal dimuat, peta tetap jalan tanpa putar.
                 var ROT = [
+                  'https://appassets.local/leaflet/leaflet-rotate-src.js',
                   'https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js',
                   'https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js'
                 ];
@@ -184,6 +220,7 @@ object MapHtml {
                 }
 
                 loadLeaflet([
+                  'https://appassets.local/leaflet/',
                   'https://unpkg.com/leaflet@1.9.4/dist/',
                   'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/'
                 ], 0);
