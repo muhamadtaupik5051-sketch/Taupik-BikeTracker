@@ -105,6 +105,8 @@ object MapHtml {
               <div id="elv" class="lb" style="left:52px;display:none;pointer-events:none;padding:5px 10px 3px;font-size:11px">
                 <div id="elv_t"></div>
                 <svg id="elv_g" width="110" height="26"></svg>
+                <div id="elv_s" style="margin-top:3px;font-size:10px;opacity:0.9"></div>
+                <svg id="elv_b" width="110" height="6" style="display:block;margin-top:2px"></svg>
               </div>
               <div id="lb" class="lb">
                 <div class="t" onclick="lbToggle()">&#128506;</div>
@@ -447,13 +449,106 @@ object MapHtml {
 
                 // Tanjakan/turunan rute rencana (data tinggi dari Open-Meteo, resolusi sekitar 90 m).
                 var elvTimer = null, elvReq = 0;
+                var srfTimer = null, srfReq = 0;
                 function elevUpdate() {
                   clearTimeout(elvTimer);
+                  clearTimeout(srfTimer);
                   var box = document.getElementById('elv');
                   if (!box) { return; }
                   var g = plan.line.getLatLngs();
-                  if (g.length < 2 || plan.wps.length < 2) { box.style.display = 'none'; return; }
+                  if (g.length < 2 || plan.wps.length < 2) {
+                    srfReq++;
+                    box.style.display = 'none';
+                    document.getElementById('elv_s').innerHTML = '';
+                    document.getElementById('elv_b').innerHTML = '';
+                    return;
+                  }
                   elvTimer = setTimeout(function () { elevFetch(g); }, 700);
+                  srfTimer = setTimeout(function () { surfFetch(g); }, 1600);
+                }
+
+                // Permukaan jalan dari data OpenStreetMap (Overpass). Banyak jalan belum diberi tag, jadi
+                // bagian yang tidak diketahui ditampilkan apa adanya.
+                var PAVED = { asphalt: 1, paved: 1, concrete: 1, 'concrete:plates': 1, 'concrete:lanes': 1,
+                  paving_stones: 1, sett: 1, cobblestone: 1, bricks: 1, brick: 1, metal: 1, chipseal: 1 };
+                var UNPAVED = { unpaved: 1, gravel: 1, fine_gravel: 1, dirt: 1, earth: 1, ground: 1, mud: 1, sand: 1,
+                  grass: 1, compacted: 1, pebblestone: 1, rock: 1, woodchips: 1, grass_paver: 1 };
+                function overpass(q) {
+                  var eps = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+                  function tryAt(i) {
+                    if (i >= eps.length) { return Promise.resolve(null); }
+                    return fetch(eps[i], { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                      body: 'data=' + encodeURIComponent(q) })
+                      .then(function (r) { if (!r.ok) { throw new Error('x'); } return r.json(); })
+                      .catch(function () { return tryAt(i + 1); });
+                  }
+                  return tryAt(0);
+                }
+                function segDist(p, a, b) {
+                  var kx = Math.cos(p.lat * Math.PI / 180) * 111320, ky = 110540;
+                  var ax = (a.lon - p.lng) * kx, ay = (a.lat - p.lat) * ky;
+                  var bx = (b.lon - p.lng) * kx, by = (b.lat - p.lat) * ky;
+                  var dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+                  var t = l > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l)) : 0;
+                  var cx = ax + t * dx, cy = ay + t * dy;
+                  return Math.sqrt(cx * cx + cy * cy);
+                }
+                function surfFetch(g) {
+                  var my = ++srfReq;
+                  var cum = [0];
+                  for (var i = 1; i < g.length; i++) { cum.push(cum[i - 1] + map.distance(g[i - 1], g[i])); }
+                  var total = cum[cum.length - 1];
+                  if (total < 50) { return; }
+                  var n = Math.min(150, Math.max(2, Math.round(total / 40) + 1));
+                  var sm = [], j = 0;
+                  for (var k = 0; k < n; k++) {
+                    var want = total * k / (n - 1);
+                    while (j < cum.length - 2 && cum[j + 1] < want) { j++; }
+                    var seg = cum[j + 1] - cum[j];
+                    var t = seg > 0 ? (want - cum[j]) / seg : 0;
+                    sm.push({ lat: g[j].lat + (g[j + 1].lat - g[j].lat) * t, lng: g[j].lng + (g[j + 1].lng - g[j].lng) * t });
+                  }
+                  var step = Math.max(1, Math.ceil(sm.length / 60));
+                  var line = [];
+                  for (var m = 0; m < sm.length; m += step) { line.push(sm[m].lat.toFixed(5) + ',' + sm[m].lng.toFixed(5)); }
+                  var last = sm[sm.length - 1];
+                  line.push(last.lat.toFixed(5) + ',' + last.lng.toFixed(5));
+                  var q = '[out:json][timeout:25];way(around:20,' + line.join(',') + ')[highway];out tags geom;';
+                  overpass(q).then(function (d) {
+                    if (my !== srfReq || !d || !d.elements) { return; }
+                    var ways = d.elements.filter(function (w) { return w.geometry && w.geometry.length > 1; });
+                    var cnt = { paved: 0, unpaved: 0, unknown: 0 };
+                    sm.forEach(function (p) {
+                      var best = 1e9, bw = null;
+                      ways.forEach(function (w) {
+                        for (var x = 1; x < w.geometry.length; x++) {
+                          var dd = segDist(p, w.geometry[x - 1], w.geometry[x]);
+                          if (dd < best) { best = dd; bw = w; }
+                        }
+                      });
+                      var sf = bw && best <= 25 && bw.tags ? bw.tags.surface : null;
+                      if (sf && PAVED[sf]) { cnt.paved++; }
+                      else if (sf && UNPAVED[sf]) { cnt.unpaved++; }
+                      else { cnt.unknown++; }
+                    });
+                    surfShow(cnt, sm.length);
+                  });
+                }
+                function surfShow(c, n) {
+                  var pa = Math.round(c.paved * 100 / n), un = Math.round(c.unpaved * 100 / n), uk = Math.max(0, 100 - pa - un);
+                  var parts = [];
+                  if (pa > 0) { parts.push('Aspal/beton ' + pa + '%'); }
+                  if (un > 0) { parts.push('Tanah/kerikil ' + un + '%'); }
+                  if (uk > 0) { parts.push('Tak diketahui ' + uk + '%'); }
+                  document.getElementById('elv_s').innerHTML = parts.join(' &middot; ');
+                  var w = 110, x = 0, r = '';
+                  [[pa, ACCENT], [un, '#C98B3C'], [uk, '#8A94A0']].forEach(function (it) {
+                    var wd = w * it[0] / 100;
+                    if (wd > 0) { r += '<rect x="' + x.toFixed(1) + '" y="0" width="' + wd.toFixed(1) + '" height="6" rx="2" fill="' + it[1] + '"/>'; }
+                    x += wd;
+                  });
+                  document.getElementById('elv_b').innerHTML = r;
+                  document.getElementById('elv').style.display = 'block';
                 }
                 function elevFetch(g) {
                   var my = ++elvReq;
