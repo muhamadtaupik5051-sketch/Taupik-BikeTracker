@@ -246,6 +246,8 @@ class MainActivity : Activity() {
     private var homePage = 0
     private var trackPage = 0
     private var mulaiScreen = false
+    /** Status jeda yang sedang tampil di layar; dipakai untuk menyegarkan layar kalau berubah dari notifikasi. */
+    private var shownPaused = false
     private var goTrackPage: (Int) -> Unit = {}
     private val modes = listOf("Sepeda", "Lari", "Jalan")
 
@@ -319,8 +321,12 @@ class MainActivity : Activity() {
 
     private val timer = object : Runnable {
         override fun run() {
-            if (running && !paused) {
-                refreshTracking()
+            if (running) {
+                if (currentTab == -1 && paused != shownPaused) {
+                    showTracking() // menggambar ulang layar dan memasang timer lagi
+                    return
+                }
+                if (!paused) refreshTracking()
                 handler.postDelayed(this, 1000)
             }
         }
@@ -330,6 +336,11 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent?.getBooleanExtra("finish", false) == true) {
+            intent?.removeExtra("finish")
+            if (running) finishTracking()
+            return
+        }
         when (intent?.getIntExtra("tab", -1) ?: -1) {
             0 -> showHome()
             2 -> showMulai()
@@ -347,7 +358,10 @@ class MainActivity : Activity() {
                 splashDone = true
                 mulaiScreen = true
                 showTracking()
-                if (!paused) handler.post(timer)
+                if (savedInstanceState == null && intent?.getBooleanExtra("finish", false) == true) {
+                    intent.removeExtra("finish")
+                    finishTracking()
+                }
             }
             savedInstanceState == null -> showSplash()
             else -> {
@@ -362,7 +376,7 @@ class MainActivity : Activity() {
         super.onResume()
         if (currentTab == -1 && !running) startIdleGps()
         trackMap?.onResume(); chartMap?.onResume(); surveyMap?.onResume()
-        if (running && !paused && currentTab == -1) {
+        if (running && currentTab == -1) {
             handler.removeCallbacks(timer)
             handler.post(timer)
         }
@@ -1250,8 +1264,14 @@ class MainActivity : Activity() {
         setContentView(outer)
         outer.requestApplyInsets()
         if (mulaiScreen) pager.post { pager.goTo(trackPage, false) }
+        shownPaused = paused
         refreshTracking()
         if (!running) startIdleGps()
+        if (running) {
+            // Timer tetap berjalan walau dijeda, supaya layar ikut berubah saat dijeda/dilanjutkan dari notifikasi.
+            handler.removeCallbacks(timer)
+            handler.postDelayed(timer, 1000)
+        }
     }
 
     /** Sepeda: speedometer besar (ketuk untuk analog/digital), target jarak, enam statistik. */
@@ -1661,6 +1681,7 @@ class MainActivity : Activity() {
             encodeSamples().second.toString(),
             encodeSamples().first
         ).joinToString("|")
+        TrackStore.save(this, TrackStore.key(date, elapsed), route.toList())
         if (!store.add(record)) {
             Toast.makeText(this, "Gagal menyimpan aktivitas ke riwayat.", Toast.LENGTH_LONG).show()
         }
@@ -1783,6 +1804,7 @@ class MainActivity : Activity() {
                 r.add(tripCard(rec, true, { showDetail(idx, rec) }) {
                     confirm("Hapus perjalanan ini?") {
                         store.delete(rec.f.joinToString("|"))
+                        TrackStore.delete(this, TrackStore.key(rec.date, rec.elapsed))
                         showHistory()
                     }
                 }, 8)
@@ -1792,7 +1814,7 @@ class MainActivity : Activity() {
             }, 10)
             r.add(btn("Hapus semua riwayat", t.bad) {
                 confirm("Hapus semua riwayat?") {
-                    store.clear(); showHistory()
+                    store.clear(); TrackStore.deleteAll(this); showHistory()
                 }
             }, 10, 0f, dp(48))
         }
@@ -1879,14 +1901,18 @@ class MainActivity : Activity() {
         }, 10, 0f, dp(54))
         if (rec.route.size >= 2) {
             r.add(btn("⇩   EKSPOR GPX", t.surface) {
+                // Jalur lengkap (dengan waktu dan tinggi) kalau ada; aktivitas lama memakai rute yang dipadatkan.
+                val full = TrackStore.load(this, TrackStore.key(rec.date, rec.elapsed))
+                val pts = if (full.size >= 2) full else rec.route
                 FileOut.saveAndShare(this, GpxExport.fileName(rec.mode, rec.date), "application/gpx+xml",
-                    GpxExport.build(rec.mode + " " + rec.date, rec.route), "Ekspor GPX")
+                    GpxExport.build(rec.mode + " " + rec.date, pts), "Ekspor GPX")
             }, 10, 0f, dp(50))
         }
         r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         r.add(btn("Hapus perjalanan ini", t.bad) {
             confirm("Hapus perjalanan ini?") {
                 store.delete(rec.f.joinToString("|"))
+                TrackStore.delete(this, TrackStore.key(rec.date, rec.elapsed))
                 showHistory()
             }
         }, 10, 0f, dp(48))
@@ -1950,6 +1976,10 @@ class MainActivity : Activity() {
         val sndOn = ap.getBoolean("alert_sound", true)
         r.add(btn("Suara peringatan: " + (if (sndOn) "AKTIF" else "MATI"), t.surface) {
             ap.edit().putBoolean("alert_sound", !sndOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val voiceOn = ap.getBoolean("alert_voice", true)
+        r.add(btn("Suara tiap kilometer: " + (if (voiceOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_voice", !voiceOn).apply(); showSettings()
         }, 8, 0f, dp(52))
 
         r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
