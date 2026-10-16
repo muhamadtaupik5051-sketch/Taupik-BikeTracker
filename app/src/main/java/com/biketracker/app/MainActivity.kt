@@ -791,6 +791,7 @@ class MainActivity : Activity() {
             val live = card(t.surface, 14, 18)
             live.addView(tv("● AKTIVITAS SEDANG BERJALAN", 11f, a, true))
             live.add(tv(if (paused) "Dijeda • tekan LANJUT di bawah untuk meneruskan"
+                else if (TrackerState.autoPaused) "Jeda otomatis • waktu berjalan lagi saat kamu bergerak"
                 else "Merekam • buka menu Mulai untuk Utama, Rute, atau Grafik", 13f, t.text), 4)
             r.add(live, 10)
             r.add(btn("→   LIHAT AKTIVITAS", a, 30) { goTrackPage(0) }, 10, 0f, dp(54))
@@ -863,6 +864,7 @@ class MainActivity : Activity() {
             return
         }
         stopIdleGps()
+        TrackerState.autoPause = getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("auto_pause", true)
         TrackerState.start(Themes.target(this, mode))
         TrackerState.persist(this)
         sendService(TrackingService.ACTION_START)
@@ -1980,6 +1982,12 @@ class MainActivity : Activity() {
         val voiceOn = ap.getBoolean("alert_voice", true)
         r.add(btn("Suara tiap kilometer: " + (if (voiceOn) "AKTIF" else "MATI"), t.surface) {
             ap.edit().putBoolean("alert_voice", !voiceOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val autoOn = ap.getBoolean("auto_pause", true)
+        r.add(btn("Jeda otomatis saat berhenti: " + (if (autoOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("auto_pause", !autoOn).apply()
+            TrackerState.autoPause = !autoOn
+            showSettings()
         }, 8, 0f, dp(52))
 
         r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
