@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -15,6 +16,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.speech.tts.TextToSpeech
 import java.util.Locale
 
 /** Service foreground: GPS tetap aktif walau layar mati atau aplikasi di latar belakang. */
@@ -25,6 +27,8 @@ class TrackingService : Service() {
         const val ACTION_PAUSE = "com.biketracker.app.PAUSE"
         const val ACTION_RESUME = "com.biketracker.app.RESUME"
         const val ACTION_STOP = "com.biketracker.app.STOP"
+        /** Dari tombol Jeda/Lanjut di notifikasi. */
+        const val ACTION_TOGGLE = "com.biketracker.app.TOGGLE"
         private const val CHANNEL = "tracking"
         private const val NOTIF_ID = 1
     }
@@ -33,10 +37,18 @@ class TrackingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var listening = false
     private var tick = 0
+    private var channelReady = false
+
+    // Suara tiap kilometer
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingSpeech: String? = null
+    private var spokenKm = 0
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             TrackerState.onLocation(location)
+            speakSplits()
             val ev = TrackerState.routeEvent
             if (ev != 0) {
                 TrackerState.routeEvent = 0
@@ -70,6 +82,11 @@ class TrackingService : Service() {
         }
     }
 
+    private fun startTicker() {
+        handler.removeCallbacks(ticker)
+        handler.postDelayed(ticker, 1000)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -81,21 +98,151 @@ class TrackingService : Service() {
         when (intent?.action) {
             ACTION_START, ACTION_RESUME -> {
                 TrackerState.loadGuide(this)
+                spokenKm = TrackerState.splits.size
                 goForeground()
                 startListening()
-                handler.removeCallbacks(ticker)
-                handler.postDelayed(ticker, 1000)
+                startTicker()
             }
             ACTION_PAUSE -> {
                 stopListening()
                 handler.removeCallbacks(ticker)
                 notifyUpdate()
             }
+            ACTION_TOGGLE -> toggle()
             ACTION_STOP -> shutdown()
-            else -> if (!TrackerState.running) shutdown()
+            else -> recover()
         }
-        return START_NOT_STICKY
+        // Kalau sistem mematikan proses saat merekam, service dihidupkan ulang dan sesi dipulihkan (lihat recover()).
+        return START_STICKY
     }
+
+    /** Tombol Jeda/Lanjut di notifikasi. */
+    private fun toggle() {
+        if (!TrackerState.running) {
+            shutdown()
+            return
+        }
+        if (TrackerState.paused) {
+            TrackerState.resume()
+            TrackerState.loadGuide(this)
+            startListening()
+            startTicker()
+        } else {
+            TrackerState.pause()
+            stopListening()
+            handler.removeCallbacks(ticker)
+        }
+        TrackerState.persist(this)
+        notifyUpdate()
+    }
+
+    /**
+     * Dipanggil saat service dihidupkan ulang tanpa perintah (sistem sempat mematikan proses).
+     * Sesi terakhir dipulihkan dari simpanan; kalau tidak ada sesi, service berhenti.
+     */
+    private fun recover() {
+        if (TrackerState.running) {
+            try { goForeground() } catch (e: Exception) { stopSelf(); return }
+            if (!TrackerState.paused) {
+                spokenKm = TrackerState.splits.size
+                startListening()
+                startTicker()
+            }
+            return
+        }
+        if (!TrackerState.hasSaved(this)) {
+            shutdown()
+            return
+        }
+        val wasPaused = TrackerState.savedPaused(this)
+        if (!TrackerState.restore(this)) {
+            shutdown()
+            return
+        }
+        try {
+            goForeground()
+        } catch (e: Exception) {
+            // Sistem tidak mengizinkan service latar belakang dimulai; sesi tetap tersimpan dan ditawarkan saat aplikasi dibuka.
+            stopSelf()
+            return
+        }
+        if (wasPaused) {
+            notifyUpdate()
+        } else {
+            TrackerState.resume()
+            TrackerState.loadGuide(this)
+            spokenKm = TrackerState.splits.size
+            startListening()
+            startTicker()
+            notifyUpdate()
+        }
+    }
+
+    // ---------- Suara tiap kilometer ----------
+
+    private fun spokenTime(totalSec: Long): String {
+        val s = totalSec.coerceAtLeast(0L)
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        val sb = StringBuilder()
+        if (h > 0) sb.append(h).append(" jam ")
+        if (h > 0 || m > 0) sb.append(m).append(" menit ")
+        sb.append(sec).append(" detik")
+        return sb.toString()
+    }
+
+    private fun speakSplits() {
+        val n = TrackerState.splits.size
+        if (n < spokenKm) spokenKm = n
+        if (n <= spokenKm) return
+        spokenKm = n
+        if (!getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_voice", true)) return
+        val last = TrackerState.splits.last()
+        val sb = StringBuilder()
+        sb.append(n).append(" kilometer. Waktu ").append(spokenTime(TrackerState.currentElapsed() / 1000L)).append(". ")
+        if (TrackerState.mode == "Lari") {
+            sb.append("Pace ").append(last / 60).append(" menit ").append(last % 60).append(" detik per kilometer.")
+        } else {
+            sb.append("Kecepatan rata-rata ").append(Fmt.dec(TrackerState.averageSpeed(), 1)).append(" kilometer per jam.")
+        }
+        speak(sb.toString())
+    }
+
+    private fun speak(text: String) {
+        try {
+            if (tts == null) {
+                pendingSpeech = text
+                tts = TextToSpeech(applicationContext) { status ->
+                    if (status == TextToSpeech.SUCCESS) {
+                        try {
+                            tts?.setLanguage(Locale.forLanguageTag("id-ID"))
+                        } catch (e: Exception) {
+                        }
+                        ttsReady = true
+                        pendingSpeech?.let { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, "km") }
+                        pendingSpeech = null
+                    }
+                }
+                return
+            }
+            if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "km") else pendingSpeech = text
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun releaseSpeech() {
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+        }
+        tts = null
+        ttsReady = false
+        pendingSpeech = null
+    }
+
+    // ---------- Peringatan ----------
 
     private fun beep(long: Boolean) {
         try {
@@ -164,6 +311,7 @@ class TrackingService : Service() {
     private fun shutdown() {
         stopListening()
         handler.removeCallbacks(ticker)
+        releaseSpeech()
         stopForeground(true)
         stopSelf()
     }
@@ -189,16 +337,29 @@ class TrackingService : Service() {
 
     private fun buildNotification(): Notification {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26) {
+        if (Build.VERSION.SDK_INT >= 26 && !channelReady) {
             nm.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Pelacakan aktivitas", NotificationManager.IMPORTANCE_LOW)
             )
+            channelReady = true
         }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val open = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pi = PendingIntent.getActivity(
-            this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val pi = PendingIntent.getActivity(this, 0, open, flags)
+
+        // Tombol di notifikasi: Jeda/Lanjut langsung ke service, Selesai membuka aplikasi dengan dialog konfirmasi.
+        val toggleIntent = PendingIntent.getService(
+            this, 1, Intent(this, TrackingService::class.java).setAction(ACTION_TOGGLE), flags
         )
+        val finishIntent = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java)
+                .putExtra("finish", true)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            flags
+        )
+
         val km = TrackerState.distanceMeters / 1000f
         val time = fmt(TrackerState.currentElapsed())
         val main = when (TrackerState.mode) {
@@ -209,10 +370,23 @@ class TrackingService : Service() {
         val body = (if (TrackerState.offRoute && getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_route", true)) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else "")
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else Notification.Builder(this)
-        return b.setSmallIcon(android.R.drawable.ic_menu_mylocation)
+        val paused = TrackerState.paused
+        val toggleAction = Notification.Action.Builder(
+            Icon.createWithResource(this, if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause),
+            if (paused) "Lanjut" else "Jeda",
+            toggleIntent
+        ).build()
+        val finishAction = Notification.Action.Builder(
+            Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
+            "Selesai",
+            finishIntent
+        ).build()
+        return b.setSmallIcon(R.drawable.ic_stat_track)
             .setContentTitle("RideTrack Pro • ${TrackerState.mode}")
             .setContentText(body)
             .setContentIntent(pi)
+            .addAction(toggleAction)
+            .addAction(finishAction)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()
@@ -221,6 +395,7 @@ class TrackingService : Service() {
     override fun onDestroy() {
         stopListening()
         handler.removeCallbacks(ticker)
+        releaseSpeech()
         super.onDestroy()
     }
 }
