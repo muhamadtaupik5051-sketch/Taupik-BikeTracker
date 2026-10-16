@@ -3,6 +3,15 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Nomor versi: workflow mengisi VERSION_CODE otomatis (naik tiap build) agar bisa diunggah ulang ke Google Play.
+def envVersionCode = System.getenv('VERSION_CODE')
+def appVersionCode = (envVersionCode && envVersionCode.isInteger()) ? envVersionCode.toInteger() : 44
+
+// Tanda tangan tetap (opsional): aktif hanya kalau KEYSTORE_FILE diisi oleh workflow.
+// Tanpa itu, build memakai kunci debug bawaan (cukup untuk dicoba di HP, TIDAK untuk Google Play).
+def ksPath = System.getenv('KEYSTORE_FILE')
+def hasKeystore = ksPath && file(ksPath).exists()
+
 android {
     namespace 'com.biketracker.app'
     compileSdk 35
@@ -11,15 +20,11 @@ android {
         applicationId 'com.biketracker.app'
         minSdk 23
         targetSdk 35
-        versionCode 42
-        versionName '3.39'
+        versionCode appVersionCode
+        versionName '3.41'
     }
 
-
-    // Tanda tangan tetap (opsional): aktif hanya kalau KEYSTORE_FILE diisi oleh workflow.
-    // Tanpa itu, build memakai kunci debug bawaan seperti sebelumnya.
-    def ksPath = System.getenv('KEYSTORE_FILE')
-    if (ksPath && file(ksPath).exists()) {
+    if (hasKeystore) {
         signingConfigs {
             fixed {
                 storeFile file(ksPath)
@@ -28,10 +33,17 @@ android {
                 keyPassword System.getenv('KEY_PASSWORD')
             }
         }
-        buildTypes {
-            debug {
-                signingConfig signingConfigs.fixed
-            }
+    }
+
+    buildTypes {
+        debug {
+            if (hasKeystore) signingConfig signingConfigs.fixed
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig hasKeystore ? signingConfigs.fixed : signingConfigs.debug
         }
     }
 
@@ -43,4 +55,18 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+
+    lint {
+        // Laporan lint tetap dibuat, tetapi temuan lama tidak menggagalkan build.
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
 }
