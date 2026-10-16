@@ -77,6 +77,9 @@ object MapHtml {
                       align-items: center; justify-content: center; font: 700 14px sans-serif;
                       box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
                 .rb.on { background: #1E90FF; }
+                .leaflet-control-attribution { font-size: 8px !important; line-height: 1.3; padding: 0 4px !important;
+                      background: rgba(255,255,255,0.55) !important; color: #333 !important; }
+                .leaflet-control-attribution a { color: #333 !important; }
                 .lb { position: absolute; left: 10px; top: 176px; z-index: 1000; border-radius: 14px;
                       background: rgba(20,28,36,0.92); color: #fff; font: 600 12px sans-serif;
                       box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
@@ -185,25 +188,26 @@ object MapHtml {
                   try { map = L.map('map', opts); }
                   catch (e) { rotOk = false; map = L.map('map', { zoomControl: false }); }
                   map.setView([-2.5, 118], 5);
+                  map.attributionControl.setPrefix(false);
                   osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap contributors'
+                    attribution: '&copy; OpenStreetMap'
                   }).addTo(map);
                   sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
                     maxZoom: 19,
-                    attribution: 'Tiles &copy; Esri'
+                    attribution: '&copy; Esri'
                   });
                   topo = L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, maxNativeZoom: 17,
-                    attribution: '&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap (CC-BY-SA)'
+                    attribution: '&copy; OSM, SRTM, OpenTopoMap'
                   });
                   cyclo = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
                     maxZoom: 19, subdomains: 'abc',
-                    attribution: '&copy; OpenStreetMap contributors | CyclOSM'
+                    attribution: '&copy; OSM, CyclOSM'
                   });
                   trails = L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
                     maxZoom: 19, maxNativeZoom: 18, opacity: 0.85, zIndex: 5,
-                    attribution: 'Jalur: Waymarked Trails'
+                    attribution: 'Waymarked Trails'
                   });
                   try {
                     var ms = localStorage.getItem('rt_style');
