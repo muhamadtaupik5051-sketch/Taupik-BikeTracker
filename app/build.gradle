@@ -5,7 +5,7 @@ plugins {
 
 // Nomor versi: workflow mengisi VERSION_CODE otomatis (naik tiap build) agar bisa diunggah ulang ke Google Play.
 def envVersionCode = System.getenv('VERSION_CODE')
-def appVersionCode = (envVersionCode && envVersionCode.isInteger()) ? envVersionCode.toInteger() : 44
+def appVersionCode = (envVersionCode && envVersionCode.isInteger()) ? envVersionCode.toInteger() : 45
 
 // Tanda tangan tetap (opsional): aktif hanya kalau KEYSTORE_FILE diisi oleh workflow.
 // Tanpa itu, build memakai kunci debug bawaan (cukup untuk dicoba di HP, TIDAK untuk Google Play).
@@ -21,7 +21,7 @@ android {
         minSdk 23
         targetSdk 35
         versionCode appVersionCode
-        versionName '3.68'
+        versionName '3.69'
     }
 
     if (hasKeystore) {
