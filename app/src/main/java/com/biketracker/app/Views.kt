@@ -618,30 +618,33 @@ class NavIconView(ctx: Context, private val kind: Int, private val tint: Int) : 
                 path.cubicTo(6f * s, 8f * s, 18f * s, 16f * s, 18f * s, 8.6f * s)
                 c.drawPath(path, p)
             }
-            2 -> { // mulai
-                p.style = Paint.Style.FILL_AND_STROKE
-                p.strokeWidth = 1.6f * s
-                mv(9f, 6.5f); ln(18f, 12f); ln(9f, 17.5f); path.close()
-                c.drawPath(path, p)
-            }
-            3 -> { // riwayat
+            2 -> { // rekam: titik merah dalam lingkaran
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2f * s
                 c.drawCircle(12f * s, 12f * s, 8.5f * s, p)
-                mv(12f, 7f); ln(12f, 12f); ln(15.5f, 14f)
+                p.style = Paint.Style.FILL
+                c.drawCircle(12f * s, 12f * s, 4.2f * s, p)
+            }
+            3 -> { // grup: dua orang
+                c.drawCircle(9f * s, 8f * s, 3.2f * s, p)
+                c.drawCircle(17f * s, 9.5f * s, 2.6f * s, p)
+                mv(3f, 19.5f)
+                path.cubicTo(3f * s, 13f * s, 15f * s, 13f * s, 15f * s, 19.5f * s)
+                mv(16.5f, 14f)
+                path.cubicTo(19f * s, 13.2f * s, 21.5f * s, 15f * s, 21.5f * s, 19f * s)
                 c.drawPath(path, p)
             }
-            else -> { // atur
-                val rows = listOf(6f to 9f, 12f to 15f, 18f to 8f)
-                for ((y, kx) in rows) {
-                    c.drawLine(4f * s, y * s, (kx - 3.2f) * s, y * s, p)
-                    c.drawLine((kx + 3.2f) * s, y * s, 20f * s, y * s, p)
-                    c.drawCircle(kx * s, y * s, 2.2f * s, p)
-                }
+            else -> { // profil: satu orang
+                c.drawCircle(12f * s, 8f * s, 4f * s, p)
+                mv(4.5f, 20.5f)
+                path.cubicTo(4.5f * s, 13f * s, 19.5f * s, 13f * s, 19.5f * s, 20.5f * s)
+                c.drawPath(path, p)
             }
         }
     }
 }
 
-/** Bilah navigasi bawah bersama: Beranda, Rute, Mulai (tombol bulat), Riwayat, Atur. */
+/** Bilah navigasi bawah bersama: Beranda, Rute, Rekam (tombol bulat), Grup, Profil. */
 fun buildNavBar(ctx: Context, t: AppTheme, sel: Int, onTap: (Int) -> Unit): LinearLayout {
     val d = ctx.resources.displayMetrics.density
     fun dp(v: Int) = (v * d).toInt()
@@ -654,7 +657,7 @@ fun buildNavBar(ctx: Context, t: AppTheme, sel: Int, onTap: (Int) -> Unit): Line
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(6), dp(6), dp(6), dp(6))
     }
-    val labels = listOf("Beranda", "Rute", "Mulai", "Riwayat", "Atur")
+    val labels = listOf("Beranda", "Rute", "Rekam", "Grup", "Profil")
     labels.forEachIndexed { i, label ->
         val on = i == sel
         val tint = if (on) t.accent else t.muted
