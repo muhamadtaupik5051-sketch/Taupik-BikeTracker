@@ -736,6 +736,12 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CAMERA_FLASH) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startFlashBlink()
+            else Toast.makeText(this, "Izin kamera diperlukan untuk menggunakan flash.", Toast.LENGTH_LONG).show()
+            if (::t.isInitialized) showSettings()
+            return
+        }
         if (requestCode == 100) {
             if (hasFine()) {
                 if (pendingResume) {
@@ -2189,15 +2195,6 @@ class MainActivity : Activity() {
         getSharedPreferences("bike_history", MODE_PRIVATE).edit().putBoolean("flash_blink_enabled", false).apply()
         stopService(Intent(this, FlashBlinkService::class.java))
         Toast.makeText(this, "Kedip flash dimatikan", Toast.LENGTH_SHORT).show()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_CAMERA_FLASH) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startFlashBlink()
-            else Toast.makeText(this, "Izin kamera diperlukan untuk menggunakan flash.", Toast.LENGTH_LONG).show()
-            if (::t.isInitialized) showSettings()
-        }
     }
 
     private fun showSettings() {
