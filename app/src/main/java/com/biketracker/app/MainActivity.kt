@@ -2184,7 +2184,7 @@ class MainActivity : Activity() {
         val intent = Intent(this, FlashBlinkService::class.java).setAction(FlashBlinkService.ACTION_START)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-            Toast.makeText(this, "Kedip flash aktif: 2× cepat setiap 60 detik", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Kedip flash aktif: 2× cepat setiap " + fmtFlashInterval(ap.getInt(FlashBlinkService.PREF_INTERVAL, FlashBlinkService.DEFAULT_INTERVAL_S)), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             ap.edit().putBoolean("flash_blink_enabled", false).apply()
             Toast.makeText(this, "Flash tidak dapat diaktifkan pada perangkat ini.", Toast.LENGTH_LONG).show()
@@ -2241,7 +2241,8 @@ class MainActivity : Activity() {
         }, 8, 0f, dp(52))
 
         val flashOn = ap.getBoolean("flash_blink_enabled", false)
-        r.add(btn("✈  Kedip flash 2× tiap 60 detik: " + (if (flashOn) "AKTIF" else "MATI"), t.surface) {
+        val flashSec = ap.getInt(FlashBlinkService.PREF_INTERVAL, FlashBlinkService.DEFAULT_INTERVAL_S)
+        r.add(btn("✈  Kedip flash 2× tiap ${fmtFlashInterval(flashSec)}: " + (if (flashOn) "AKTIF" else "MATI"), t.surface) {
             if (flashOn) {
                 stopFlashBlink()
             } else if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -2250,6 +2251,20 @@ class MainActivity : Activity() {
                 requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_FLASH)
             }
             showSettings()
+        }, 8, 0f, dp(52))
+
+        r.add(btn("⏱  Jeda antar kedip: " + fmtFlashInterval(flashSec) + "  (ketuk untuk ganti)", t.surface) {
+            val labels = FLASH_INTERVALS.map { fmtFlashInterval(it) }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("Jeda antar kedip flash")
+                .setSingleChoiceItems(labels, FLASH_INTERVALS.indexOf(flashSec).coerceAtLeast(0)) { d, which ->
+                    ap.edit().putInt(FlashBlinkService.PREF_INTERVAL, FLASH_INTERVALS[which]).apply()
+                    if (flashOn) startFlashBlink()  // mulai ulang dengan jeda baru
+                    d.dismiss()
+                    showSettings()
+                }
+                .setNegativeButton("Batal", null)
+                .show()
         }, 8, 0f, dp(52))
 
         r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
@@ -2779,6 +2794,11 @@ class MainActivity : Activity() {
         groupMap?.release(); groupMap = null
         super.onDestroy()
     }
-    companion object { private const val REQUEST_CAMERA_FLASH = 904 }
+    companion object {
+        private const val REQUEST_CAMERA_FLASH = 904
+        private val FLASH_INTERVALS = listOf(10, 15, 20, 30, 45, 60, 90, 120, 180, 300)
+        private fun fmtFlashInterval(sec: Int) =
+            if (sec >= 60 && sec % 60 == 0) "${sec / 60} menit" else "$sec detik"
+    }
 
 }
