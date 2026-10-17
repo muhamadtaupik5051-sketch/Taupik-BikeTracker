@@ -1,4 +1,4 @@
-# Daftar periksa rilis Google Play — RideTrack Pro
+# Daftar periksa rilis Google Play — Delaas
 
 ## 1. Tanda tangan (wajib, sekali saja)
 Google Play meminta file yang ditandatangani dengan kunci unggah Anda sendiri. Tanpa itu, build memakai kunci debug dan **ditolak Play**.
@@ -12,7 +12,7 @@ Google Play meminta file yang ditandatangani dengan kunci unggah Anda sendiri. T
 4. **Simpan file `ride.jks` dan passwordnya di tempat aman.** Kalau hilang, aplikasi tidak bisa diperbarui lagi.
 
 ## 2. File yang diunggah
-Jalankan workflow, lalu unduh artifact **RideTrack-Pro-AAB** (`app-release.aab`) dan unggah ke Play Console. `versionCode` naik otomatis tiap build.
+Jalankan workflow, lalu unduh artifact **Delaas-AAB** (`app-release.aab`) dan unggah ke Play Console. `versionCode` naik otomatis tiap build.
 
 ## 3. Isian Play Console
 - **Kebijakan privasi**: unggah `docs/PRIVACY_POLICY.md` ke GitHub Pages atau situs lain, lalu tempel URL-nya.
