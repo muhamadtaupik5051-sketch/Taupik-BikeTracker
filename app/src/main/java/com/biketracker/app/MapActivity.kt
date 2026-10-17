@@ -772,7 +772,7 @@ class MapActivity : Activity() {
     private fun spill(label: String, fill: Int, danger: Boolean = false, action: () -> Unit) = TextView(this).apply {
         val main = fill == accentColor
         text = label
-        textSize = 11.5f
+        textSize = 12.5f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         setSingleLine()
@@ -781,6 +781,8 @@ class MapActivity : Activity() {
         background = GradientDrawable().apply {
             cornerRadius = dp(12).toFloat()
             setColor(if (main) accentColor else t.surface2)
+            // Garis tepi tipis supaya tombol terlihat jelas di atas panel yang warnanya mirip.
+            if (!main) setStroke(dp(1), (t.text and 0x00FFFFFF) or 0x40000000)
         }
         isClickable = true
         setOnClickListener { action() }
@@ -807,11 +809,19 @@ class MapActivity : Activity() {
             }
             elevation = dp(8).toFloat()
         }
-        bar.addView(TextView(this).apply {
-            text = "Rencana rute"; textSize = 14f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
-        })
+        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        titleRow.addView(TextView(this).apply {
+            text = "Rencana rute"; textSize = 15f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val foldBtn = TextView(this).apply {
+            text = "▾ Lipat"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(10), dp(4), dp(2), dp(4))
+        }
+        titleRow.addView(foldBtn)
+        bar.addView(titleRow)
         val info = TextView(this).apply {
-            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 11.5f; setTextColor(t.muted)
+            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 12.5f
+            setTextColor((t.text and 0x00FFFFFF) or 0xE0000000.toInt())
         }
         planInfo = info
         bar.addView(info, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
@@ -829,28 +839,53 @@ class MapActivity : Activity() {
             top = 10
         ))
 
-        val lb = spill("→ Sekali jalan", t.bg) {
-            planLoop = !planLoop
-            loopBtn?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
-            if (pageReady) mapView.evaluateJavascript("setLoop($planLoop)", null)
-        }
-        loopBtn = lb
-        bar.addView(planRow(
-            lb to 1.25f,
-            spill("☷ Titik", t.bg) { waypointListDialog() } to 1f,
-            spill("⌕ Cari", t.bg) { searchDialog() } to 1f
-        ))
-
-        bar.addView(planRow(
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // Tombol utama saja di panel; sisanya ada di menu "Lainnya".
+        body.addView(planRow(
             spill("Simpan rute", accentColor) { savePlanDialog() } to 1.25f,
             spill("☰ Rute saya", t.bg) { savedPlansDialog() } to 1.1f,
-            spill("Maps ↗", t.bg) {
-                if (planWps.size < 2) Toast.makeText(this, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
-                else openDirections(planWps, planProfile())
-            } to 0.9f
+            spill("⋯ Lainnya", t.bg) { planMoreDialog() } to 1f
         ))
+        // Baris pertama (Urungkan, Hapus semua, Ikuti jalan) ikut dilipat bersama tombol lain.
+        val firstRow = bar.getChildAt(bar.childCount - 1)
+        bar.removeView(firstRow)
+        body.addView(firstRow, 0)
+        bar.addView(body)
+        foldBtn.setOnClickListener {
+            val folded = body.visibility == View.VISIBLE
+            body.visibility = if (folded) View.GONE else View.VISIBLE
+            foldBtn.text = if (folded) "▴ Buka" else "▾ Lipat"
+        }
         planBar = bar
         return bar
+    }
+
+    private fun planMoreDialog() {
+        val items = arrayOf(
+            if (planLoop) "⟲  Pulang-pergi: ON (ketuk untuk ganti ke searah)" else "→  Searah: ketuk untuk ganti ke pulang-pergi",
+            "☷  Daftar titik",
+            "⌕  Cari lokasi",
+            "↗  Buka di Google Maps"
+        )
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Lainnya")
+            .setItems(items) { _, i ->
+                when (i) {
+                    0 -> {
+                        planLoop = !planLoop
+                        if (pageReady) mapView.evaluateJavascript("setLoop($planLoop)", null)
+                        Toast.makeText(this, if (planLoop) "Pulang-pergi" else "Searah", Toast.LENGTH_SHORT).show()
+                    }
+                    1 -> waypointListDialog()
+                    2 -> searchDialog()
+                    3 -> {
+                        if (planWps.size < 2) Toast.makeText(this, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
+                        else openDirections(planWps, planProfile())
+                    }
+                }
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
     }
 
     /** Link arah Google Maps (maks. 10 titik, dipilih merata). */
