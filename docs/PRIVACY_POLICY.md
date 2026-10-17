@@ -1,6 +1,6 @@
 # Kebijakan Privasi — Delaas
 
-Terakhir diperbarui: 17 Oktober 2026
+Terakhir diperbarui: 17 Oktober 2026 (versi 3.70)
 
 Delaas adalah aplikasi pelacak aktivitas (bersepeda, lari, jalan). Dokumen ini menjelaskan data apa yang diproses aplikasi.
 
@@ -10,6 +10,7 @@ Delaas adalah aplikasi pelacak aktivitas (bersepeda, lari, jalan). Dokumen ini m
 - **Berat badan dan pengaturan** yang Anda isi sendiri (untuk perkiraan kalori, target, tema).
 - **Profil (opsional)** — nama dan foto yang Anda pilih sendiri dari galeri lewat pemilih foto sistem. Foto dikecilkan dan disimpan di penyimpanan aplikasi; aplikasi tidak membaca galeri Anda di luar foto yang Anda pilih.
 - **Grup (lokal)** — nama grup, kode undangan, daftar nama teman yang Anda ketik sendiri, dan titik kumpul. Semuanya hanya tersimpan di HP ini. Aplikasi tidak menyinkronkan grup ke server dan tidak menampilkan posisi teman secara langsung.
+- **Kedip flash (opsional)** — bila Anda menyalakannya di Pengaturan, aplikasi menyalakan lampu flash (senter) HP secara berkala sebagai penanda saat bersepeda. Aplikasi **tidak mengambil foto atau video**, tidak membuka pratinjau kamera, dan tidak menyimpan atau mengirim apa pun dari kamera. Pengaturan jeda kedip hanya disimpan di HP.
 - **Berkas yang Anda impor** — file GPX atau cadangan riwayat yang Anda pilih lewat pemilih file sistem. Isinya dibaca di HP dan tidak dikirim ke mana pun.
 
 ## Di mana data disimpan
@@ -28,6 +29,7 @@ Data hanya keluar dari perangkat bila Anda sendiri memilih **Bagikan** (termasuk
 ## Izin yang diminta
 - Lokasi (presisi): menghitung jarak dan kecepatan.
 - Layanan latar depan jenis lokasi + notifikasi: agar rekaman tetap berjalan saat layar mati. Notifikasi menampilkan ringkasan aktivitas dan tombol Jeda/Selesai.
+- Kamera + layanan latar depan jenis kamera: hanya untuk menyalakan lampu flash pada fitur Kedip flash (opsional, mati secara bawaan). Izin kamera diminta ketika Anda menyalakan fitur ini, bukan saat aplikasi dibuka. Tidak ada gambar yang diambil.
 - Getar dan wake lock: peringatan keluar rute dan menjaga GPS tetap aktif saat merekam.
 - Internet: memuat peta.
 - Foto dan berkas: tidak ada izin akses penyimpanan. Foto profil dan file impor hanya dibaca lewat pemilih sistem, dan hanya yang Anda pilih.
