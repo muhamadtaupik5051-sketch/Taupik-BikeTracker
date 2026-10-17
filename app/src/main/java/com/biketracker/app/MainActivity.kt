@@ -2172,6 +2172,34 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun startFlashBlink() {
+        val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
+        ap.edit().putBoolean("flash_blink_enabled", true).apply()
+        val intent = Intent(this, FlashBlinkService::class.java).setAction(FlashBlinkService.ACTION_START)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            Toast.makeText(this, "Kedip flash aktif: 2× cepat setiap 60 detik", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            ap.edit().putBoolean("flash_blink_enabled", false).apply()
+            Toast.makeText(this, "Flash tidak dapat diaktifkan pada perangkat ini.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun stopFlashBlink() {
+        getSharedPreferences("bike_history", MODE_PRIVATE).edit().putBoolean("flash_blink_enabled", false).apply()
+        stopService(Intent(this, FlashBlinkService::class.java))
+        Toast.makeText(this, "Kedip flash dimatikan", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CAMERA_FLASH) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startFlashBlink()
+            else Toast.makeText(this, "Izin kamera diperlukan untuk menggunakan flash.", Toast.LENGTH_LONG).show()
+            if (::t.isInitialized) showSettings()
+        }
+    }
+
     private fun showSettings() {
         val r = column()
         backToProfile(r)
@@ -2212,6 +2240,18 @@ class MainActivity : Activity() {
         r.add(btn("Jeda otomatis saat berhenti: " + (if (autoOn) "AKTIF" else "MATI"), t.surface) {
             ap.edit().putBoolean("auto_pause", !autoOn).apply()
             TrackerState.autoPause = !autoOn
+            showSettings()
+        }, 8, 0f, dp(52))
+
+        val flashOn = ap.getBoolean("flash_blink_enabled", false)
+        r.add(btn("✈  Kedip flash 2× tiap 60 detik: " + (if (flashOn) "AKTIF" else "MATI"), t.surface) {
+            if (flashOn) {
+                stopFlashBlink()
+            } else if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                startFlashBlink()
+            } else {
+                requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_FLASH)
+            }
             showSettings()
         }, 8, 0f, dp(52))
 
@@ -2742,4 +2782,6 @@ class MainActivity : Activity() {
         groupMap?.release(); groupMap = null
         super.onDestroy()
     }
+    companion object { private const val REQUEST_CAMERA_FLASH = 904 }
+
 }
