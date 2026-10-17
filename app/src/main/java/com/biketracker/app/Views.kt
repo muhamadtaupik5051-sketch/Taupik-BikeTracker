@@ -34,6 +34,8 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
     var maxSpeed = 0f
     var scaleMax = 60f
     var digital = false
+    /** Digital murni: hanya angka besar, tanpa busur dan skala analog. */
+    var pure = false
     var accent: Int = t.accent
     var scale = GAUGE_SCALE
 
@@ -68,12 +70,33 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
         if (abs(v - v.roundToInt()) < 0.01f) v.roundToInt().toString()
         else String.format(Locale.US, "%.1f", v)
 
+    private fun drawPure(c: Canvas) {
+        p.style = Paint.Style.FILL
+        p.textAlign = Paint.Align.CENTER
+        p.color = accent
+        p.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        p.textSize = 86f
+        c.drawText(Fmt.dec(speed, 1), 150f, 158f, p)
+        p.typeface = Typeface.DEFAULT
+        p.color = t.muted
+        p.textSize = 16f
+        c.drawText("km/jam", 150f, 190f, p)
+        p.textSize = 13f
+        c.drawText("Maks " + Fmt.dec(maxSpeed, 1) + " km/jam", 150f, 222f, p)
+    }
+
     override fun onDraw(c: Canvas) {
         val s = width * scale / 300f
         c.save()
         c.translate((width - 300f * s) / 2f, 0f)
         c.scale(s, s)
         c.translate(0f, -18f)
+
+        if (pure) {
+            drawPure(c)
+            c.restore()
+            return
+        }
 
         p.style = Paint.Style.STROKE
         p.strokeCap = Paint.Cap.BUTT
