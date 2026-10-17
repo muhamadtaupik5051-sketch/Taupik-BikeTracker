@@ -23,7 +23,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/ic_launcher"
-        android:label="RideTrack Pro"
+        android:label="Delaas"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
