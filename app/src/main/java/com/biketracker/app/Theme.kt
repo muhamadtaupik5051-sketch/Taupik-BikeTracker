@@ -37,17 +37,19 @@ object Themes {
     /** Warna aksen per aktivitas: dipakai di beranda, layar tracking, dan ringkasan. */
     fun modeAccent(m: String): Int = when (m) {
         "Sepeda" -> 0xFF19B5FF.toInt()
+        "Motor" -> 0xFFFF5A7A.toInt()
         "Lari" -> 0xFFFF7A2E.toInt()
         else -> 0xFF34D399.toInt()
     }
 
     private fun targetOptions(m: String): IntArray = when (m) {
         "Sepeda" -> intArrayOf(5, 10, 15, 20, 25, 30, 40, 50, 75, 100)
+        "Motor" -> intArrayOf(10, 20, 30, 50, 75, 100, 150, 200, 300)
         "Lari" -> intArrayOf(1, 2, 3, 5, 7, 10, 15, 21, 42)
         else -> intArrayOf(2000, 3000, 4000, 5000, 6000, 8000, 10000, 12000, 15000, 20000)
     }
 
-    private fun defaultTarget(m: String) = when (m) { "Sepeda" -> 20; "Lari" -> 5; else -> 8000 }
+    private fun defaultTarget(m: String) = when (m) { "Sepeda" -> 20; "Motor" -> 50; "Lari" -> 5; else -> 8000 }
 
     private fun p(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
     fun index(c: Context) = p(c).getInt("theme", 0).coerceIn(0, all.size - 1)
@@ -73,8 +75,6 @@ object Themes {
     }
 
     fun targetLabel(m: String, v: Int): String = if (m == "Jalan") Fmt.int(v) else v.toString() + " km"
-
-    fun targetUnit(m: String): String = if (m == "Jalan") "langkah" else "km"
 
     fun weight(c: Context) = p(c).getInt("weight_kg", 65)
     fun stepWeight(c: Context, dir: Int) =
