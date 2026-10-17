@@ -31,6 +31,6 @@ class GpxExportTest {
     fun namaDiloloskanDanNamaBerkasAman() {
         val gpx = GpxExport.build("A & B <x>", emptyList())
         assertTrue(gpx.contains("A &amp; B &lt;x&gt;"))
-        assertEquals("RideTrack_Sepeda_2026-10-16_06_30.gpx", GpxExport.fileName("Sepeda", "2026-10-16 06:30"))
+        assertEquals("Delaas_Sepeda_2026-10-16_06_30.gpx", GpxExport.fileName("Sepeda", "2026-10-16 06:30"))
     }
 }
