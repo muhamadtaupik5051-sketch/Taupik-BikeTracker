@@ -1267,6 +1267,7 @@ class MainActivity : Activity() {
                     digitalMode = i == 1
                     prefs.edit().putBoolean("digital", digitalMode).apply()
                     g.digital = digitalMode
+                    g.pure = digitalMode
                     g.invalidate()
                     style()
                 }
@@ -1283,11 +1284,13 @@ class MainActivity : Activity() {
         val g = GaugeView(this, t).apply {
             scaleMax = scaleFor(mode)
             digital = digitalMode
+            pure = digitalMode
             accent = a
             setOnClickListener {
                 digitalMode = !digitalMode
                 prefs.edit().putBoolean("digital", digitalMode).apply()
                 digital = digitalMode
+                pure = digitalMode
                 invalidate()
             }
         }
