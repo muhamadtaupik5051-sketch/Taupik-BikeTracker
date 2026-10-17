@@ -879,7 +879,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("Agar rekaman tidak terputus")
             .setMessage("Beberapa HP (Xiaomi, Oppo, Vivo, Samsung) menghentikan aplikasi di latar belakang. " +
-                "Kecualikan RideTrack Pro dari penghematan baterai supaya GPS tetap merekam saat layar mati.")
+                "Kecualikan Delaas dari penghematan baterai supaya GPS tetap merekam saat layar mati.")
             .setPositiveButton("Atur sekarang") { _, _ -> openBatterySettings() }
             .setNegativeButton("Nanti", null)
             .show()
@@ -2000,7 +2000,7 @@ class MainActivity : Activity() {
             openBatterySettings()
         }, 8, 0f, dp(52))
 
-        r.add(tv("RideTrack Pro • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+        r.add(tv("Delaas • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
             gravity = Gravity.CENTER
         }, 20)
         show(4, r, true)
@@ -2117,7 +2117,7 @@ class MainActivity : Activity() {
         av.setOnClickListener { pickPhoto() }
         hc.addView(av)
         hc.add(tv(ProfileStore.displayName(this), 20f, t.text, true).apply { gravity = Gravity.CENTER }, 10)
-        hc.add(tv(if (ProfileStore.name(this).isEmpty()) "Ketuk Ubah nama untuk mengisi namamu" else "Pengguna RideTrack Pro",
+        hc.add(tv(if (ProfileStore.name(this).isEmpty()) "Ketuk Ubah nama untuk mengisi namamu" else "Pengguna Delaas",
             12f, t.muted).apply { gravity = Gravity.CENTER }, 2)
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER }
         actions.addView(btn("Ubah foto", t.surface2, 18) { pickPhoto() }, LinearLayout.LayoutParams(0, dp(42), 1f))
@@ -2153,7 +2153,7 @@ class MainActivity : Activity() {
         r.add(profileRow("🎨", "Tema", Themes.current(this).name) { showTheme() }, 8)
         r.add(profileRow("⚙", "Atur", "Target, berat badan, peringatan, cadangan") { showSettings() }, 8)
 
-        r.add(tv("RideTrack Pro • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+        r.add(tv("Delaas • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
             gravity = Gravity.CENTER
         }, 20)
         show(4, r)
@@ -2249,7 +2249,7 @@ class MainActivity : Activity() {
             left.add(mono(tv("Kode: $code", 13f, a, true)), 2)
             info.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
             info.addView(btn("Kode", t.surface2, 14) {
-                shareText("Gabung grup bersepeda saya di RideTrack Pro. Kode undangan: $code", "Bagikan kode undangan")
+                shareText("Gabung grup bersepeda saya di Delaas. Kode undangan: $code", "Bagikan kode undangan")
             }, LinearLayout.LayoutParams(dp(88), dp(44)))
             gc.add(info, 12)
 
@@ -2344,7 +2344,7 @@ class MainActivity : Activity() {
             return
         }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-        FileOut.saveAndShare(this, "RideTrack_riwayat_$stamp.txt", "text/plain",
+        FileOut.saveAndShare(this, "Delaas_riwayat_$stamp.txt", "text/plain",
             list.joinToString("\n"), "Cadangkan riwayat")
     }
 
@@ -2369,7 +2369,7 @@ class MainActivity : Activity() {
                 .append('\n')
         }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-        FileOut.saveAndShare(this, "RideTrack_riwayat_$stamp.csv", "text/csv", sb.toString(), "Ekspor CSV")
+        FileOut.saveAndShare(this, "Delaas_riwayat_$stamp.csv", "text/csv", sb.toString(), "Ekspor CSV")
     }
 
     private fun importHistoryPick() {
