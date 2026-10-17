@@ -382,7 +382,7 @@ class TrackingService : Service() {
             finishIntent
         ).build()
         return b.setSmallIcon(R.drawable.ic_stat_track)
-            .setContentTitle("RideTrack Pro • ${TrackerState.mode}")
+            .setContentTitle("Delaas • ${TrackerState.mode}")
             .setContentText(body)
             .setContentIntent(pi)
             .addAction(toggleAction)
