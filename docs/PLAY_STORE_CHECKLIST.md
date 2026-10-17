@@ -20,11 +20,16 @@ Jalankan workflow, lalu unduh artifact **Delaas-AAB** (`app-release.aab`) dan un
 - **Data safety (tambahan)**: nama dan foto profil, nama grup, daftar teman, dan titik kumpul hanya disimpan di perangkat dan tidak dikirim ke server pengembang, jadi tidak dihitung sebagai data yang dikumpulkan. Jawaban untuk lokasi presisi tetap "dikumpulkan, tidak dibagikan, hanya di perangkat". Pastikan jawabannya sama dengan `docs/PRIVACY_POLICY.md`.
 - **Penjelasan izin**: aplikasi menampilkan dialog penjelasan sebelum meminta izin lokasi dan notifikasi. Ambil tangkapan layar dialog ini bila Play Console meminta bukti.
 - **Foreground service (lokasi)**: jelaskan bahwa layanan lokasi latar depan dipakai untuk merekam rute saat layar mati, dan sertakan video pendek menunjukkan tombol Mulai → rekaman berjalan dengan notifikasi.
+- **Data safety (kamera)**: izin kamera hanya dipakai untuk menyalakan lampu flash pada fitur Kedip flash. Tidak ada foto/video yang diambil, disimpan, atau dikirim. Jangan centang pengumpulan foto/video.
+- **Foreground service (kamera)**: jelaskan bahwa layanan latar depan jenis kamera dipakai menyalakan lampu flash secara berkala (fitur opsional, mati secara bawaan) sebagai penanda saat bersepeda, dan hanya berjalan setelah pengguna menyalakannya di Pengaturan. Sertakan video pendek: Pengaturan → Kedip flash AKTIF → notifikasi "Kedip flash aktif" → flash berkedip. Bila Play meminta, fitur ini bisa dihapus dari versi Play (izin CAMERA, FOREGROUND_SERVICE_CAMERA, FlashBlinkService, dan tombol di Pengaturan).
+- **Target API**: sejak 31 Agustus 2026 Play mewajibkan target API 36 (sudah diatur di versi 3.70).
 - **Kategori**: Kesehatan & kebugaran. **Iklan**: tidak ada.
 - **Aset toko**: ikon 512×512, feature graphic 1024×500, minimal 2 screenshot HP.
 - Akun pengembang baru (perorangan) wajib menjalankan **uji tertutup** dengan beberapa penguji selama beberapa minggu sebelum bisa rilis produksi.
 
 ## 4. Sebelum rilis, uji di HP sungguhan
+- Tombol Kembali: di layar Rute, Profil, dan Pengaturan harus kembali ke layar sebelumnya (target API 36).
+- Kedip flash: nyalakan di Pengaturan, izinkan kamera, ganti jeda, pastikan flash berkedip 2× sesuai jeda; matikan dan pastikan berhenti.
 - Rekam 10–15 menit dengan layar mati; pastikan rute tidak putus.
 - Tekan Jeda/Lanjut dan Selesai dari notifikasi.
 - Matikan data seluler: peta bisa kosong di area baru (cache hanya area yang pernah dibuka), tetapi rekaman harus tetap jalan.
