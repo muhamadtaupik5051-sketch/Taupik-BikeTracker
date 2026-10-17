@@ -22,7 +22,7 @@ object GpxExport {
     fun build(name: String, route: List<DoubleArray>): String {
         val sb = StringBuilder()
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-        sb.append("<gpx version=\"1.1\" creator=\"RideTrack Pro\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
+        sb.append("<gpx version=\"1.1\" creator=\"Delaas\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
         val firstTime = route.firstOrNull { it.size >= 4 && it[3] > 0.0 }?.get(3)?.toLong()
         if (firstTime != null) {
             sb.append("  <metadata><time>").append(iso(firstTime)).append("</time></metadata>\n")
@@ -47,6 +47,6 @@ object GpxExport {
 
     fun fileName(mode: String, date: String): String {
         val safe = (mode + "_" + date).replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "RideTrack_$safe.gpx"
+        return "Delaas_$safe.gpx"
     }
 }
