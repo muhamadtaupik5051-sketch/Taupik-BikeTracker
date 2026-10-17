@@ -19,6 +19,10 @@ class FlashBlinkService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var cameraId: String? = null
     private var torchOn = false
+    private fun intervalMs(): Long {
+        val sec = getSharedPreferences("bike_history", MODE_PRIVATE).getInt(PREF_INTERVAL, DEFAULT_INTERVAL_S)
+        return sec.coerceIn(5, 3600) * 1000L
+    }
     private val cameraManager by lazy { getSystemService(Context.CAMERA_SERVICE) as CameraManager }
 
     // One cycle: ON 150 ms, OFF 180 ms, ON 150 ms, then remain OFF until next minute.
@@ -43,7 +47,7 @@ class FlashBlinkService : Service() {
                 setTorch(false)
                 handler.postDelayed(secondPulse, GAP_BETWEEN_PULSES_MS)
             }, PULSE_DURATION_MS)
-            handler.postDelayed(this, INTERVAL_MS)
+            handler.postDelayed(this, intervalMs())
         }
     }
 
@@ -55,7 +59,7 @@ class FlashBlinkService : Service() {
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_track)
                 .setContentTitle("Kedip flash aktif")
-                .setContentText("2× kedip cepat setiap 60 detik")
+                .setContentText("2× kedip cepat setiap ${intervalMs() / 1000} detik")
                 .setOngoing(true)
                 .build()
         } else {
@@ -63,7 +67,7 @@ class FlashBlinkService : Service() {
             Notification.Builder(this)
                 .setSmallIcon(R.drawable.ic_stat_track)
                 .setContentTitle("Kedip flash aktif")
-                .setContentText("2× kedip cepat setiap 60 detik")
+                .setContentText("2× kedip cepat setiap ${intervalMs() / 1000} detik")
                 .setOngoing(true)
                 .build()
         }
@@ -82,9 +86,9 @@ class FlashBlinkService : Service() {
             return START_NOT_STICKY
         }
         handler.removeCallbacksAndMessages(null)
-        // First double-blink after one minute; then repeat every 60 seconds.
-        handler.postDelayed(cycle, INTERVAL_MS)
-        return START_STICKY
+        // First double-blink after one interval; then repeat (interval is set in Settings).
+        handler.postDelayed(cycle, intervalMs())
+        return START_NOT_STICKY
     }
 
     private fun setTorch(enabled: Boolean) {
@@ -116,7 +120,8 @@ class FlashBlinkService : Service() {
         const val ACTION_START = "com.biketracker.app.action.FLASH_BLINK_START"
         private const val CHANNEL_ID = "flash_blink_channel"
         private const val NOTIFICATION_ID = 6902
-        private const val INTERVAL_MS = 60_000L
+        const val PREF_INTERVAL = "flash_interval_s"
+        const val DEFAULT_INTERVAL_S = 60
         private const val PULSE_DURATION_MS = 150L
         private const val GAP_BETWEEN_PULSES_MS = 180L
     }
