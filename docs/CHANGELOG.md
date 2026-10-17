@@ -1,5 +1,27 @@
 # Catatan perubahan
 
+## 3.67
+- Nama aplikasi diganti menjadi **Delaas** (nama di layar HP, notifikasi, kartu bagikan, nama file ekspor, dan folder Download/Delaas). ID paket dan database tidak berubah, jadi bisa langsung menimpa versi lama dan riwayat tetap ada.
+
+## 3.66
+- Halaman **Rute** muat satu layar tanpa terpotong: speedometer kecil diperkecil (130dp), tinggi minimum peta diturunkan sehingga peta mengisi sisa layar, dan tulisan "km/jam" tidak lagi terpotong di bawah.
+
+## 3.65
+- Kartu **Target** di halaman Rekam dipendekkan sedikit lagi.
+
+## 3.64
+- Kartu **Target** di halaman Rekam dibuat lebih pendek (tinggi kartu diperkecil, lebar kembali penuh).
+
+## 3.63
+- Halaman **Rute**: speedometer kecil ikut gaya baru (jarum + angka di bawah untuk Analog, panel neon untuk Digital) dan mengikuti pilihan Analog/Digital di Rekam.
+
+## 3.62
+- Tampilan **Digital** dirancang ulang: panel neon bersudut miring, ikon pesepeda dengan garis kecepatan, angka bergaya 7-segmen miring bercahaya, plat "KM/JAM", dan teks kecepatan maksimum di bawahnya.
+
+## 3.61
+- Speedometer **analog** dirancang ulang: jarum meruncing dengan poros, busur warna cerah penuh, angka skala putih tebal, angka kecepatan di bawah poros.
+- Kartu **Target** di halaman Rekam dibuat sedikit lebih sempit.
+
 ## 3.60
 - Menu bawah baru: **Beranda, Rute, Rekam, Grup, Profil**.
 - Mode baru **Motor** (beranda, rekam, riwayat, target jarak, batas kecepatan 180 km/jam; kalori tidak dihitung).
