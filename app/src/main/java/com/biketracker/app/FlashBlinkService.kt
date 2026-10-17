@@ -54,6 +54,7 @@ class FlashBlinkService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification: Notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_track)
