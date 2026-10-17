@@ -1,24 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Taupik BikeTracker</string>
+    <string name="app_name">Delaas</string>
 
-    <!-- Izin -->
-    <string name="perm_title">Izin diperlukan</string>
-    <string name="perm_msg">Aplikasi butuh izin lokasi (dan notifikasi) untuk merekam rute dan kecepatan, termasuk saat layar mati.</string>
+    <string name="gps_off_title">GPS HP sedang mati</string>
+    <string name="gps_off_msg">Nyalakan Lokasi (GPS) di HP agar jarak dan rute terekam. Tanpa GPS, perjalananmu tidak akan tercatat.</string>
+    <string name="open_settings">Buka Pengaturan</string>
+    <string name="gps_off_notif">GPS mati, nyalakan Lokasi</string>
+
+    <string name="perm_title">Izin yang dibutuhkan</string>
+    <string name="perm_msg">Delaas memakai lokasi presisi (GPS) untuk menghitung jarak, kecepatan, dan rute, termasuk saat layar mati selama kamu merekam. Lokasi tidak dikirim ke server mana pun.\n\nIzin notifikasi dipakai untuk tombol Jeda dan Selesai selama merekam.</string>
     <string name="perm_continue">Lanjut</string>
 
-    <!-- GPS -->
-    <string name="gps_off_title">GPS mati</string>
-    <string name="gps_off_msg">GPS perangkat sedang nonaktif. Aktifkan GPS agar perjalanan bisa direkam.</string>
-    <string name="gps_off_notif">GPS mati</string>
-    <string name="open_settings">Buka Pengaturan</string>
-    <string name="map_gps_off">GPS mati • Aktifkan GPS</string>
-    <string name="map_crashed">Peta bermasalah dan ditutup. Coba buka lagi.</string>
+    <string name="import_gpx_button">⇧   Impor aktivitas dari file GPX</string>
+    <string name="import_gpx_pick_mode">Impor sebagai aktivitas apa?</string>
+    <string name="import_gpx_ok">Aktivitas diimpor (%1$s km)</string>
+    <string name="import_gpx_dupe">Aktivitas ini sudah ada di riwayat.</string>
+    <string name="import_gpx_fail">File GPX tidak berisi jalur yang bisa dibaca.</string>
 
-    <!-- Impor GPX -->
-    <string name="import_gpx_button">⇩   Impor rute dari file GPX</string>
-    <string name="import_gpx_fail">File GPX tidak valid atau tidak bisa dibaca.</string>
-    <string name="import_gpx_pick_mode">Jenis aktivitas</string>
-    <string name="import_gpx_ok">Berhasil mengimpor %1$s km</string>
-    <string name="import_gpx_dupe">Rute ini sudah ada di riwayat.</string>
+    <string name="map_gps_off">GPS HP mati. Nyalakan Lokasi di pengaturan HP.</string>
+    <string name="map_crashed">Peta berhenti bekerja. Tutup lalu buka lagi halaman ini.</string>
 </resources>
