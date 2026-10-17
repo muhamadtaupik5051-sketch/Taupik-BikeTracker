@@ -12,6 +12,43 @@ object MapHtml {
     fun client(ctx: android.content.Context): android.webkit.WebViewClient {
         val app = ctx.applicationContext
         return object : android.webkit.WebViewClient() {
+            /** Peta tidak boleh pindah halaman: tautan luar (mis. atribusi Leaflet) dibuka di peramban. */
+            private fun openOutside(url: String?): Boolean {
+                val s = url ?: return true
+                if (s.startsWith("https://") || s.startsWith("http://")) {
+                    try {
+                        app.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(s))
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } catch (e: Exception) {
+                    }
+                }
+                return true
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView?,
+                request: android.webkit.WebResourceRequest?
+            ): Boolean = openOutside(request?.url?.toString())
+
+            @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+            override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, url: String?): Boolean = openOutside(url)
+
+            /** Proses WebView mati (mis. memori habis): jangan biarkan aplikasi ikut tertutup. */
+            override fun onRenderProcessGone(
+                view: android.webkit.WebView?,
+                detail: android.webkit.RenderProcessGoneDetail?
+            ): Boolean {
+                try {
+                    (view?.parent as? android.view.ViewGroup)?.removeView(view)
+                    view?.destroy()
+                    android.widget.Toast.makeText(app, app.getString(R.string.map_crashed), android.widget.Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                }
+                return true
+            }
+
             override fun shouldInterceptRequest(
                 view: android.webkit.WebView?,
                 request: android.webkit.WebResourceRequest?
@@ -54,6 +91,12 @@ object MapHtml {
         }
         web.settings.cacheMode = if (online) android.webkit.WebSettings.LOAD_DEFAULT
         else android.webkit.WebSettings.LOAD_CACHE_ELSE_NETWORK
+    }
+
+    /** Peta hanya butuh JavaScript dan jaringan: matikan akses berkas dan konten lokal. */
+    fun harden(web: android.webkit.WebView) {
+        web.settings.allowFileAccess = false
+        web.settings.allowContentAccess = false
     }
 
     fun build(accentHex: String): String {
