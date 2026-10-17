@@ -758,9 +758,6 @@ class MainActivity : Activity() {
         }
         wc.add(tv(msg, 12f, if (hit > 0) t.good else t.muted, hit > 0), 10)
         r.add(wc, 10)
-        if (!running) {
-            r.add(btn("Mulai aktivitas  →", a, 24) { showMulai() }, 10, 0f, dp(48))
-        }
 
         val totalKm = recs.sumOf { it.km.toDouble() }.toFloat()
         val totalMs = recs.sumOf { it.elapsed }
@@ -989,10 +986,12 @@ class MainActivity : Activity() {
             scaleMax = scaleFor(mode)
             accent = a
             scale = 1f
-            digital = true
+            compact = true
+            digital = digitalMode
+            pure = digitalMode
         }
         routeGauge = g
-        top.addView(g, LinearLayout.LayoutParams(dp(124), -2))
+        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this)
@@ -1334,7 +1333,10 @@ class MainActivity : Activity() {
         val info = tv("", 11f, t.muted)
         targetInfo = info
         tc.add(info, 6)
-        r.add(tc, 4)
+        // Kartu target dibuat sedikit lebih sempit dari kartu lain
+        r.addView(tc, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(4); leftMargin = dp(18); rightMargin = dp(18)
+        })
 
         val maxC = statCard("Kecepatan maks.", "0,0 km/jam", a)
         val avgC = statCard("Rata-rata", "0,0 km/jam", t.good)
