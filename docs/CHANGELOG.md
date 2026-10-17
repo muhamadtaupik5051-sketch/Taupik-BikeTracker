@@ -1,5 +1,12 @@
 # Catatan perubahan
 
+## 3.69
+- **Rute tersimpan**: layar baru di Profil > Rute tersimpan. Daftar kartu dengan peta mini, jarak, tanjakan, perkiraan waktu, dan jumlah diikuti; cari nama, saring per Sepeda/Motor/Lari/Jalan atau Favorit, tandai bintang.
+- **Detail rute**: peta jalur, profil tinggi, tombol **Ikuti rute** (jadi garis panduan dan membuka layar Mulai), Ekspor GPX, Ganti nama, Hapus, dan Matikan panduan.
+- **Tambah rute** dari tiga sumber: buat di peta (Simpan rute), impor file GPX, atau **Simpan sebagai rute** dari detail riwayat.
+- Rute lama dari peta otomatis muncul di daftar (memakai penyimpanan yang sama). Di peta, tombol Rute saya punya tombol **Daftar lengkap** menuju layar baru.
+- Unit test bertambah (penyederhanaan titik rute dan pembacaan titik).
+
 ## 3.68
 - **GPS mati**: tombol Mulai memeriksa GPS dan menampilkan dialog dengan jalan pintas ke pengaturan Lokasi. Kalau GPS dimatikan di tengah rekaman, notifikasi menampilkan peringatan. Halaman peta juga memberi tahu.
 - **Penjelasan izin** ditampilkan sebelum dialog izin lokasi dan notifikasi (syarat Google Play).
