@@ -62,11 +62,13 @@ class TrackingService : Service() {
 
         override fun onProviderEnabled(provider: String) {
             TrackerState.gpsStatus = "Menunggu lokasi…"
+            notifyUpdate()
         }
 
         override fun onProviderDisabled(provider: String) {
             TrackerState.gpsStatus = "GPS mati"
             TrackerState.speedKmh = 0f
+            notifyUpdate()
         }
 
         @Suppress("DEPRECATION")
@@ -284,13 +286,21 @@ class TrackingService : Service() {
         }
     }
 
+    /** GPS di pengaturan HP menyala atau tidak. */
+    private fun gpsOn(): Boolean = try {
+        lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+    } catch (e: Exception) {
+        true
+    }
+
     private fun startListening() {
         if (listening) return
         holdWake(true)
         try {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, listener)
             listening = true
-            TrackerState.gpsStatus = "Menunggu lokasi…"
+            TrackerState.gpsStatus = if (gpsOn()) "Menunggu lokasi…" else "GPS mati"
+            if (!gpsOn()) notifyUpdate()
         } catch (e: SecurityException) {
             TrackerState.gpsStatus = "Izin lokasi ditolak"
         } catch (e: Exception) {
@@ -367,7 +377,8 @@ class TrackingService : Service() {
             "Jalan" -> Fmt.int(TrackerState.steps()) + " langkah • " + Fmt.dec(km, 2) + " km • " + time
             else -> Fmt.dec(km, 2) + " km • " + time
         }
-        val body = (if (TrackerState.offRoute && getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_route", true)) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else if (TrackerState.autoPaused) " • jeda otomatis" else "")
+        val gpsWarn = if (TrackerState.gpsStatus == "GPS mati") "⚠ " + getString(R.string.gps_off_notif) + " • " else ""
+        val body = gpsWarn + (if (TrackerState.offRoute && getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("alert_route", true)) "⚠ Keluar rute • " else "") + main + (if (TrackerState.paused) " • dijeda" else if (TrackerState.autoPaused) " • jeda otomatis" else "")
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
         else Notification.Builder(this)
         val paused = TrackerState.paused
