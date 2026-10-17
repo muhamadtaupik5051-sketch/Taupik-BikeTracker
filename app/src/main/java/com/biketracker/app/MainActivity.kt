@@ -991,7 +991,7 @@ class MainActivity : Activity() {
             pure = digitalMode
         }
         routeGauge = g
-        top.addView(g, LinearLayout.LayoutParams(dp(150), -2))
+        top.addView(g, LinearLayout.LayoutParams(dp(130), -2))
 
         val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this)
@@ -1043,7 +1043,7 @@ class MainActivity : Activity() {
         col.add(banner, 6)
 
         val mp = MapPanel(this, t, a)
-        mp.minimumHeight = dp(400)
+        mp.minimumHeight = dp(180)
         trackMap = mp
         col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
         return col
@@ -1315,6 +1315,8 @@ class MainActivity : Activity() {
         r.add(g, 6)
 
         val tc = card(t.surface, 12, 16)
+        // Kartu target dibuat lebih pendek (tipis ke atas-bawah), lebarnya tetap penuh
+        tc.setPadding(dp(14), dp(5), dp(14), dp(5))
         val head = LinearLayout(this)
         head.addView(tv(if (mode == "Motor") "◎ Target berkendara" else "◎ Target bersepeda", 12f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
         val pct = tv("0%", 12f, t.good, true)
@@ -1322,21 +1324,18 @@ class MainActivity : Activity() {
         head.addView(pct)
         tc.addView(head)
         val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
-        val value = mono(tv("0,00", 22f, a, true))
+        val value = mono(tv("0,00", 16f, a, true))
         targetValue = value
         vrow.addView(value)
-        vrow.addView(tv("  / ${TrackerState.target} km", 13f, t.muted))
-        tc.add(vrow, 4)
+        vrow.addView(tv("  / ${TrackerState.target} km", 11f, t.muted))
+        tc.add(vrow, 0)
         val bar = SegBar(this, t).apply { color = a }
         targetBar = bar
-        tc.add(bar, 8, 0f, dp(10))
-        val info = tv("", 11f, t.muted)
+        tc.add(bar, 2, 0f, dp(6))
+        val info = tv("", 10f, t.muted)
         targetInfo = info
-        tc.add(info, 6)
-        // Kartu target dibuat sedikit lebih sempit dari kartu lain
-        r.addView(tc, LinearLayout.LayoutParams(-1, -2).apply {
-            topMargin = dp(4); leftMargin = dp(18); rightMargin = dp(18)
-        })
+        tc.add(info, 1)
+        r.add(tc, 10)
 
         val maxC = statCard("Kecepatan maks.", "0,0 km/jam", a)
         val avgC = statCard("Rata-rata", "0,0 km/jam", t.good)
