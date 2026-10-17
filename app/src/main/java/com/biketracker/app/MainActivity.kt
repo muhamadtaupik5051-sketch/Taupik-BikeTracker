@@ -10,6 +10,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.location.Location
@@ -23,7 +24,10 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -240,16 +244,18 @@ class MainActivity : Activity() {
     private var currentTab = 0
     private var filter = "Semua"
     private var digitalMode = false
+    /** Halaman di bawah Profil (Riwayat, Tema, Atur): tombol kembali menuju Profil. */
+    private var profileSub = false
+    private var groupMap: MapPanel? = null
     private var inDetail = false
     private var pendingResume = false
     private var splashDone = false
-    private var homePage = 0
     private var trackPage = 0
     private var mulaiScreen = false
     /** Status jeda yang sedang tampil di layar; dipakai untuk menyegarkan layar kalau berubah dari notifikasi. */
     private var shownPaused = false
     private var goTrackPage: (Int) -> Unit = {}
-    private val modes = listOf("Sepeda", "Lari", "Jalan")
+    private val modes = listOf("Sepeda", "Motor", "Lari", "Jalan")
 
     // Status pelacakan disimpan di TrackerState supaya tetap hidup bersama TrackingService.
     private val running get() = TrackerState.running
@@ -284,19 +290,6 @@ class MainActivity : Activity() {
     private var splitsBox: LinearLayout? = null
     private var trackMap: MapPanel? = null
     private var chartMap: MapPanel? = null
-    private var surveyMap: MapPanel? = null
-    private var surveyGauge: GaugeView? = null
-    private var surveyMax: TextView? = null
-    private var surveyAvg: TextView? = null
-    private var surveyDist: TextView? = null
-    private var surveyTime: TextView? = null
-    private var surveyClimb: TextView? = null
-    private var surveyKcal: TextView? = null
-    private var surveyTarget: TextView? = null
-    private var surveyPct: TextView? = null
-    private var surveyBar: SegBar? = null
-    private var surveyCoord: TextView? = null
-    private var surveySub: TextView? = null
     private var chartDistText: TextView? = null
     private var chartTimeText: TextView? = null
     private var chartKcalText: TextView? = null
@@ -344,14 +337,15 @@ class MainActivity : Activity() {
         when (intent?.getIntExtra("tab", -1) ?: -1) {
             0 -> showHome()
             2 -> showMulai()
-            3 -> showHistory()
-            4 -> showSettings()
+            3 -> showGroup()
+            4 -> showProfile()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyTheme()
+        digitalMode = prefs.getBoolean("digital", false)
         when {
             // Service masih berjalan (mis. aplikasi dibuka lagi dari notifikasi)
             TrackerState.running -> {
@@ -374,8 +368,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (currentTab == -1 && !running) startIdleGps()
-        trackMap?.onResume(); chartMap?.onResume(); surveyMap?.onResume()
+        if ((currentTab == -1 || currentTab == 3) && !running) startIdleGps()
+        trackMap?.onResume(); chartMap?.onResume(); groupMap?.onResume()
         if (running && currentTab == -1) {
             handler.removeCallbacks(timer)
             handler.post(timer)
@@ -384,7 +378,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         stopIdleGps()
-        trackMap?.onPause(); chartMap?.onPause(); surveyMap?.onPause()
+        trackMap?.onPause(); chartMap?.onPause(); groupMap?.onPause()
         handler.removeCallbacks(timer)
         super.onPause()
     }
@@ -434,7 +428,7 @@ class MainActivity : Activity() {
 
     private fun dim(c: Int) = (c and 0x00FFFFFF) or 0x66000000
 
-    private fun scaleFor(m: String) = when (m) { "Sepeda" -> 60f; "Lari" -> 30f; else -> 12f }
+    private fun scaleFor(m: String) = when (m) { "Sepeda" -> 60f; "Motor" -> 140f; "Lari" -> 30f; else -> 12f }
 
     // ---------- UI helpers ----------
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -482,11 +476,13 @@ class MainActivity : Activity() {
         setOnClickListener { action() }
     }
 
-    private fun show(tab: Int, body: LinearLayout) {
+    private fun show(tab: Int, body: LinearLayout, sub: Boolean = false) {
         stopIdleGps()
         Themes.keepAwake(this, false)
-        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null; surveyMap?.release(); surveyMap = null
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
+        groupMap?.release(); groupMap = null
         currentTab = tab
+        profileSub = sub
         inDetail = false
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -503,7 +499,7 @@ class MainActivity : Activity() {
     }
 
     private fun navBar(sel: Int): LinearLayout = buildNavBar(this, t, sel) { i ->
-        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showMulai(); 3 -> showHistory(); else -> showSettings() }
+        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showMulai(); 3 -> showGroup(); else -> showProfile() }
     }
 
     private fun title(r: LinearLayout, small: String, big: String) {
@@ -511,7 +507,15 @@ class MainActivity : Activity() {
         r.add(tv(big, 24f, t.text, true), 2)
     }
 
-    private fun icon(m: String) = when (m) { "Sepeda" -> "🚴"; "Lari" -> "🏃"; else -> "🚶" }
+    /** Tautan kembali di atas halaman yang berada di bawah Profil. */
+    private fun backToProfile(r: LinearLayout) {
+        r.add(tv("‹  Profil", 13f, t.accent, true).apply {
+            setPadding(0, 0, dp(16), dp(8))
+            setOnClickListener { showProfile() }
+        })
+    }
+
+    private fun icon(m: String) = when (m) { "Sepeda" -> "🚴"; "Motor" -> "🏍️"; "Lari" -> "🏃"; else -> "🚶" }
 
     private fun statCard(label: String, initial: String, accent: Int = t.text): Pair<View, TextView> {
         val c = card(t.surface, 10, 14)
@@ -556,9 +560,9 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun confirm(msg: String, ok: () -> Unit) {
+    private fun confirm(msg: String, okLabel: String = "Hapus", ok: () -> Unit) {
         AlertDialog.Builder(this).setMessage(msg)
-            .setPositiveButton("Hapus") { _, _ -> ok() }
+            .setPositiveButton(okLabel) { _, _ -> ok() }
             .setNegativeButton("Batal", null).show()
     }
 
@@ -646,16 +650,10 @@ class MainActivity : Activity() {
     }
 
     // ---------- Screens ----------
-    private fun greeting(m: String) = when (m) {
-        "Sepeda" -> "Siap gowes hari ini?"
-        "Lari" -> "Siap lari hari ini?"
-        else -> "Siap jalan hari ini?"
-    }
-
-    private fun startLabel(m: String) = when (m) { "Sepeda" -> "BERSEPEDA"; "Lari" -> "LARI"; else -> "JALAN" }
+    private fun startLabel(m: String) = when (m) { "Sepeda" -> "BERSEPEDA"; "Motor" -> "BERKENDARA"; "Lari" -> "LARI"; else -> "JALAN" }
 
     private fun targetSub(m: String) = when (m) {
-        "Sepeda" -> "Jarak per perjalanan"
+        "Sepeda", "Motor" -> "Jarak per perjalanan"
         "Lari" -> "Jarak per lari"
         else -> "Langkah per hari"
     }
@@ -714,7 +712,7 @@ class MainActivity : Activity() {
         left.addView(mono(tv(totalText, 24f, a, true)))
         top.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
         val countText = when (m) {
-            "Sepeda" -> "${recs.size} perjalanan"
+            "Sepeda", "Motor" -> "${recs.size} perjalanan"
             "Lari" -> "${recs.size} kali lari"
             else -> "${week.count { it > 0f }} hari berjalan"
         }
@@ -765,7 +763,7 @@ class MainActivity : Activity() {
         val totalMs = recs.sumOf { it.elapsed }
         val hours = totalMs / 3600000f
         val metrics = when (m) {
-            "Sepeda" -> Pair(
+            "Sepeda", "Motor" -> Pair(
                 statCard("Kecepatan rata-rata",
                     if (hours > 0f) Fmt.dec(totalKm / hours, 1) + " km/jam" else "0 km/jam"),
                 statCard("Tanjakan minggu ini",
@@ -909,10 +907,7 @@ class MainActivity : Activity() {
         targetInfo = null; gpsText = null; distanceText = null; timeText = null; avgText = null
         maxText = null; kcalText = null; climbText = null; speedText = null; cadenceText = null
         paceNowText = null; paceAvgText = null; paceBestText = null; ringInfo = null; splitsBox = null
-        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null; surveyMap?.release(); surveyMap = null
-        surveyGauge = null; surveyMax = null; surveyAvg = null; surveyDist = null; surveyTime = null
-        surveyClimb = null; surveyKcal = null; surveyTarget = null; surveyPct = null; surveyBar = null
-        surveyCoord = null; surveySub = null
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
         chartDistText = null; chartTimeText = null; chartKcalText = null; routeDistText = null; routeTimeText = null
         routeGauge = null; routeAvgText = null; routeMaxText = null; routeKcalText = null
         routeClimbText = null; routeTarget = null; routePct = null; routeBar = null; routeBanner = null
@@ -928,11 +923,10 @@ class MainActivity : Activity() {
             TrackerState.gpsStatus = if (l.accuracy <= 30f) TrackerState.gpsLabel(l.accuracy) else "Mencari GPS…"
             gpsText?.text = gpsStatus
             if (good) TrackerState.lastFix = l
-            updateSurveyInfo()
             if (good) {
                 trackMap?.position(l.latitude, l.longitude)
                 chartMap?.position(l.latitude, l.longitude)
-                surveyMap?.position(l.latitude, l.longitude)
+                groupMap?.position(l.latitude, l.longitude)
             }
         }
 
@@ -974,32 +968,6 @@ class MainActivity : Activity() {
         c.add(v, 1)
         return Pair(c, v)
     }
-
-    private fun surveyPrefs() = getSharedPreferences("survey", MODE_PRIVATE)
-
-    private fun comp(b: Float): String {
-        val n = listOf("U", "TL", "T", "TG", "S", "BD", "B", "BL")
-        return n[(((b % 360f) + 360f) % 360f / 45f + 0.5f).toInt() % 8]
-    }
-
-    private fun updateSurveyInfo() {
-        val c = surveyCoord ?: return
-        val l = TrackerState.lastFix
-        if (l == null) {
-            c.text = "Menunggu sinyal GPS…"
-            surveySub?.text = "Koordinat, ketinggian, dan akurasi tampil di sini"
-            return
-        }
-        c.text = String.format(Locale.US, "%.6f, %.6f", l.latitude, l.longitude)
-        val alt = if (l.hasAltitude()) Fmt.dec(l.altitude, 0) + " m" else "--"
-        val head = if (l.hasBearing() && l.hasSpeed() && l.speed > 0.5f) Fmt.dec(l.bearing, 0) + "° " + comp(l.bearing) else "--"
-        surveySub?.text = "Tinggi " + alt + " · ±" + l.accuracy.toInt() + " m · " + head
-    }
-
-    /** Titik survei tersimpan: waktu|lat|lon|alt|nama (sama dengan menu Peta). */
-    private fun surveyPoints(): MutableList<List<String>> =
-        (surveyPrefs().getString("points", "") ?: "").lines().filter { it.isNotBlank() }
-            .map { it.split("|") }.filter { it.size >= 5 }.toMutableList()
 
     private fun trackScroll(col: LinearLayout) = ScrollView(this).apply {
         isFillViewport = true
@@ -1276,20 +1244,63 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Sepeda: speedometer besar (ketuk untuk analog/digital), target jarak, enam statistik. */
+    /** Pilihan tampilan speedometer: Analog atau Digital (pilihan diingat). */
+    private fun gaugeToggle(g: GaugeView, a: Int): LinearLayout {
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            background = box(t.surface, 20, true)
+        }
+        val chips = ArrayList<TextView>()
+        fun style() {
+            chips.forEachIndexed { i, v ->
+                val sel = (i == 1) == digitalMode
+                v.setTextColor(if (sel) onColor(a) else t.muted)
+                v.background = if (sel) box(a, 16) else null
+            }
+        }
+        listOf("Analog", "Digital").forEachIndexed { i, name ->
+            val v = tv(name, 12f, t.muted, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(16), 0, dp(16), 0)
+                setOnClickListener {
+                    digitalMode = i == 1
+                    prefs.edit().putBoolean("digital", digitalMode).apply()
+                    g.digital = digitalMode
+                    g.invalidate()
+                    style()
+                }
+            }
+            chips.add(v)
+            row.addView(v, LinearLayout.LayoutParams(-2, dp(32)))
+        }
+        style()
+        return row
+    }
+
+    /** Sepeda dan Motor: speedometer besar (analog atau digital), target jarak, enam statistik. */
     private fun buildBikeBody(r: LinearLayout, a: Int) {
         val g = GaugeView(this, t).apply {
-            scaleMax = scaleFor("Sepeda")
+            scaleMax = scaleFor(mode)
             digital = digitalMode
             accent = a
-            setOnClickListener { digitalMode = !digitalMode; digital = digitalMode; invalidate() }
+            setOnClickListener {
+                digitalMode = !digitalMode
+                prefs.edit().putBoolean("digital", digitalMode).apply()
+                digital = digitalMode
+                invalidate()
+            }
         }
         gauge = g
+        r.addView(gaugeToggle(g, a), LinearLayout.LayoutParams(-2, dp(38)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = dp(4)
+        })
         r.add(g, 6)
 
         val tc = card(t.surface, 12, 16)
         val head = LinearLayout(this)
-        head.addView(tv("◎ Target bersepeda", 12f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(tv(if (mode == "Motor") "◎ Target berkendara" else "◎ Target bersepeda", 12f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
         val pct = tv("0%", 12f, t.good, true)
         targetPct = pct
         head.addView(pct)
@@ -1313,9 +1324,10 @@ class MainActivity : Activity() {
         val disC = statCard("Jarak", "0,00 km")
         val timC = statCard("Durasi", "00:00:00")
         val clmC = statCard("Tanjakan", "0 m")
-        val kalC = statCard("Kalori", "0 kkal")
+        val kalC = if (mode == "Motor") statCard("Kecepatan", "0,0 km/jam") else statCard("Kalori", "0 kkal")
         maxText = maxC.second; avgText = avgC.second; distanceText = disC.second
-        timeText = timC.second; climbText = clmC.second; kcalText = kalC.second
+        timeText = timC.second; climbText = clmC.second
+        if (mode == "Motor") speedText = kalC.second else kcalText = kalC.second
         statRow(r, maxC, avgC, 10)
         statRow(r, disC, timC)
         statRow(r, clmC, kalC)
@@ -1452,6 +1464,11 @@ class MainActivity : Activity() {
 
     private fun calories(): Int = TrackerState.calories(Themes.weight(this))
 
+    /** Teks kalori; naik motor tidak dihitung sebagai pembakaran kalori. */
+    private fun kcalStr(): String = if (mode == "Motor") "–" else "${calories()} kkal"
+
+    private fun recKcal(rec: Rec): String = if (rec.mode == "Motor") "–" else "${rec.kcal} kkal"
+
     private fun refreshTracking() {
         gpsText?.text = gpsStatus
         if (distanceText == null) return
@@ -1462,7 +1479,7 @@ class MainActivity : Activity() {
 
         distanceText?.text = Fmt.dec(km, 2) + " km"
         timeText?.text = Fmt.time(currentElapsed())
-        kcalText?.text = "${calories()} kkal"
+        kcalText?.text = kcalStr()
         climbText?.text = "${climbM.roundToInt()} m"
         targetBar?.let { it.fraction = frac; it.invalidate() }
         targetPct?.text = pct
@@ -1470,24 +1487,12 @@ class MainActivity : Activity() {
         val rl = route.toList()
         trackMap?.sync(rl)
         chartMap?.sync(rl)
-        surveyMap?.sync(rl)
         routeDistText?.text = Fmt.dec(km, 2) + " km"
         routeTimeText?.text = Fmt.time(currentElapsed())
-        routeKcalText?.text = "${calories()} kkal"
-        updateSurveyInfo()
-        surveyGauge?.let { it.speed = speedKmh; it.maxSpeed = maxSpeedKmh; it.invalidate() }
-        surveyMax?.text = Fmt.dec(maxSpeedKmh, 1)
-        surveyAvg?.text = Fmt.dec(averageSpeed(), 1)
-        surveyDist?.text = Fmt.dec(km, 2) + " km"
-        surveyTime?.text = Fmt.time(currentElapsed())
-        surveyClimb?.text = "${climbM.roundToInt()} m"
-        surveyKcal?.text = "${calories()} kkal"
-        surveyTarget?.text = if (mode == "Jalan") Fmt.int(TrackerState.steps()) else Fmt.dec(km, 2)
-        surveyPct?.text = pct
-        surveyBar?.let { it.fraction = frac; it.invalidate() }
+        routeKcalText?.text = kcalStr()
         chartDistText?.text = Fmt.dec(km, 2) + " km"
         chartTimeText?.text = Fmt.time(currentElapsed())
-        chartKcalText?.text = "${calories()} kkal"
+        chartKcalText?.text = kcalStr()
         routeAvgText?.text = Fmt.dec(averageSpeed(), 1)
         routeMaxText?.text = Fmt.dec(maxSpeedKmh, 1)
         routeBanner?.let { bnr ->
@@ -1556,6 +1561,7 @@ class MainActivity : Activity() {
                 }
                 avgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
                 maxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+                speedText?.text = Fmt.dec(speedKmh, 1) + " km/jam"
                 chartAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
                 chartMaxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
                 targetValue?.text = Fmt.dec(km, 2)
@@ -1731,7 +1737,7 @@ class MainActivity : Activity() {
             "Jalan" -> statCard("Rata-rata", Fmt.dec(averageSpeed(), 1) + " km/jam", a)
             else -> statCard("Kecepatan maks.", Fmt.dec(maxSpeedKmh, 1) + " km/jam", a)
         }
-        statRow(r, peakCard, statCard("Kalori", "${calories()} kkal"))
+        statRow(r, peakCard, statCard("Kalori", kcalStr()))
         statRow(r, statCard("Tanjakan", "${climbM.roundToInt()} m"),
             statCard("Jarak", Fmt.dec(km, 2) + " km"))
 
@@ -1748,6 +1754,7 @@ class MainActivity : Activity() {
 
     private fun showHistory() {
         val r = column()
+        backToProfile(r)
         title(r, "RIWAYAT", "Perjalananmu")
 
         val all = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }
@@ -1764,10 +1771,10 @@ class MainActivity : Activity() {
         r.add(sc, 12)
 
         val chips = LinearLayout(this)
-        listOf("Semua", "Sepeda", "Lari", "Jalan").forEachIndexed { i, name ->
+        listOf("Semua", "Sepeda", "Motor", "Lari", "Jalan").forEachIndexed { i, name ->
             val sel = name == filter
             chips.addView(tv(name, 12f, if (sel) onColor(t.accent) else t.muted, sel).apply {
-                setPadding(dp(12), dp(6), dp(12), dp(6))
+                setPadding(dp(10), dp(6), dp(10), dp(6))
                 background = box(if (sel) t.accent else t.surface, 14, !sel)
                 setOnClickListener { filter = name; showHistory() }
             }, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) leftMargin = dp(6) })
@@ -1797,7 +1804,7 @@ class MainActivity : Activity() {
                     statCard("Pace terbaik", Fmt.pace(best) + " /km", t.good)
                 }
                 "Jalan" -> statCard("Langkah terbanyak", Fmt.int(recs.maxOf { it.steps }), t.good)
-                "Sepeda" -> statCard("Rata-rata tercepat", Fmt.dec(recs.maxOf { it.avgF }, 1) + " km/jam", t.good)
+                "Sepeda", "Motor" -> statCard("Rata-rata tercepat", Fmt.dec(recs.maxOf { it.avgF }, 1) + " km/jam", t.good)
                 else -> statCard("Rata-rata jarak", Fmt.dec(recs.sumOf { it.km.toDouble() } / recs.size, 2) + " km", t.good)
             }
             statRow(r, statCard("Total durasi", formatTime(totalMs)), extra, 8)
@@ -1820,7 +1827,7 @@ class MainActivity : Activity() {
                 }
             }, 10, 0f, dp(48))
         }
-        show(3, r)
+        show(4, r, true)
     }
 
     private fun showDetail(idx: Int, rec: Rec) {
@@ -1867,7 +1874,7 @@ class MainActivity : Activity() {
         }
         statRow(r, statCard("Durasi", formatTime(rec.elapsed)), second, 10)
         statRow(r, statCard("Kecepatan maks.", Fmt.dec(rec.maxF, 1) + " km/jam", a),
-            statCard("Kalori", "${rec.kcal} kkal"))
+            statCard("Kalori", recKcal(rec)))
         if (rec.moving > 0L) {
             statRow(r, statCard("Waktu bergerak", formatTime(rec.moving)),
                 statCard("Waktu berhenti", formatTime((rec.elapsed - rec.moving).coerceAtLeast(0L))))
@@ -1919,39 +1926,15 @@ class MainActivity : Activity() {
             }
         }, 10, 0f, dp(48))
 
-        show(3, r)
+        show(4, r, true)
         inDetail = true
     }
 
     private fun showSettings() {
         val r = column()
-        title(r, "PENGATURAN", "Tampilan")
-        r.add(tv("TEMA WARNA", 11f, t.muted, true), 14)
-
-        Themes.all.forEachIndexed { i, th ->
-            val sel = i == Themes.index(this)
-            val row = LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(16), dp(14), dp(16), dp(14))
-                background = GradientDrawable().apply {
-                    setColor(th.bg); cornerRadius = dp(16).toFloat()
-                    setStroke(dp(if (sel) 3 else 1), if (sel) th.accent else th.surface2)
-                }
-                setOnClickListener { Themes.save(this@MainActivity, i); applyTheme(); showSettings() }
-            }
-            row.addView(tv(th.name, 15f, th.text, true), LinearLayout.LayoutParams(0, -2, 1f))
-            for (c in listOf(th.accent, th.good, th.surface, th.bad)) {
-                row.addView(View(this).apply {
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL; setColor(c); setStroke(dp(1), 0x33888888)
-                    }
-                }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { leftMargin = dp(6) })
-            }
-            if (sel) row.addView(tv("  ✓", 16f, th.accent, true))
-            r.add(row, 10)
-        }
-
-        r.add(tv("LAINNYA", 11f, t.muted, true), 20)
+        backToProfile(r)
+        title(r, "PENGATURAN", "Atur")
+        r.add(tv("UMUM", 11f, t.muted, true), 20)
         r.add(stepper("Berat badan", "Untuk perkiraan kalori", "${Themes.weight(this)} kg",
             { Themes.stepWeight(this, -1); showSettings() },
             { Themes.stepWeight(this, 1); showSettings() }), 8)
@@ -2002,12 +1985,339 @@ class MainActivity : Activity() {
         r.add(tv("RideTrack Pro • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
             gravity = Gravity.CENTER
         }, 20)
+        show(4, r, true)
+    }
+
+    /** Halaman Tema: pilih warna aplikasi. */
+    private fun showTheme() {
+        val r = column()
+        backToProfile(r)
+        title(r, "TEMA", "Warna aplikasi")
+        r.add(tv("Ketuk untuk memilih. Tema langsung dipakai di semua layar.", 12f, t.muted), 4)
+        Themes.all.forEachIndexed { i, th ->
+            val sel = i == Themes.index(this)
+            val row = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                background = GradientDrawable().apply {
+                    setColor(th.bg); cornerRadius = dp(16).toFloat()
+                    setStroke(dp(if (sel) 3 else 1), if (sel) th.accent else th.surface2)
+                }
+                setOnClickListener { Themes.save(this@MainActivity, i); applyTheme(); showTheme() }
+            }
+            row.addView(tv(th.name, 15f, th.text, true), LinearLayout.LayoutParams(0, -2, 1f))
+            for (c in listOf(th.accent, th.good, th.surface, th.bad)) {
+                row.addView(View(this).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL; setColor(c); setStroke(dp(1), 0x33888888)
+                    }
+                }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { leftMargin = dp(6) })
+            }
+            if (sel) row.addView(tv("  ✓", 16f, th.accent, true))
+            r.add(row, 10)
+        }
+        show(4, r, true)
+    }
+
+    // ---------- Profil ----------
+
+    private fun askText(title: String, hint: String, initial: String, ok: (String) -> Unit) {
+        val input = EditText(this).apply {
+            setText(initial)
+            setSelection(text.length)
+            this.hint = hint
+            setSingleLine(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        AlertDialog.Builder(this).setTitle(title).setView(input)
+            .setPositiveButton("Simpan") { _, _ -> ok(input.text.toString().trim()) }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    /** Lingkaran foto profil; kalau belum ada foto, tampil huruf pertama nama. */
+    private fun avatar(sizeDp: Int): View {
+        val size = dp(sizeDp)
+        val bmp = ProfileStore.loadPhoto(this)
+        val circleOutline = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        if (bmp != null) {
+            return ImageView(this).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                outlineProvider = circleOutline
+                clipToOutline = true
+                layoutParams = LinearLayout.LayoutParams(size, size)
+                contentDescription = "Foto profil"
+            }
+        }
+        return tv(ProfileStore.displayName(this).take(1).uppercase(Locale.getDefault()), (sizeDp / 2.4f), onColor(t.accent), true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.accent) }
+            layoutParams = LinearLayout.LayoutParams(size, size)
+        }
+    }
+
+    private fun pickPhoto() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqPhoto)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih foto.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun profileRow(emoji: String, label: String, sub: String, onClick: () -> Unit): LinearLayout {
+        val c = card(t.surface, 14, 16).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { onClick() }
+        }
+        c.addView(tv(emoji, 20f, t.text).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(36), -2))
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mid.addView(tv(label, 15f, t.text, true))
+        mid.add(tv(sub, 11f, t.muted), 2)
+        c.addView(mid, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        c.addView(tv("›", 22f, t.muted, true))
+        return c
+    }
+
+    /** Profil: foto, nama, ringkasan, lalu menuju Riwayat, Tema, dan Atur. */
+    private fun showProfile() {
+        val r = column()
+        title(r, "PROFIL", "Akun saya")
+
+        val hc = card(t.surface, 16, 22).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        val av = avatar(96)
+        av.setOnClickListener { pickPhoto() }
+        hc.addView(av)
+        hc.add(tv(ProfileStore.displayName(this), 20f, t.text, true).apply { gravity = Gravity.CENTER }, 10)
+        hc.add(tv(if (ProfileStore.name(this).isEmpty()) "Ketuk Ubah nama untuk mengisi namamu" else "Pengguna RideTrack Pro",
+            12f, t.muted).apply { gravity = Gravity.CENTER }, 2)
+        val actions = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        actions.addView(btn("Ubah foto", t.surface2, 18) { pickPhoto() }, LinearLayout.LayoutParams(0, dp(42), 1f))
+        actions.addView(btn("Ubah nama", t.surface2, 18) {
+            askText("Nama kamu", "Contoh: Taupik", ProfileStore.name(this)) {
+                ProfileStore.setName(this, it); showProfile()
+            }
+        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(8) })
+        hc.add(actions, 14)
+        if (ProfileStore.hasPhoto(this)) {
+            hc.add(tv("Hapus foto", 12f, t.bad, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(4))
+                setOnClickListener { ProfileStore.removePhoto(this@MainActivity); showProfile() }
+            }, 6)
+        }
+        r.add(hc, 12)
+
+        val recs = rawRecords().mapNotNull { parse(it) }
+        val sc = card(t.surface, 12, 16).apply { orientation = LinearLayout.HORIZONTAL }
+        fun cell(label: String, value: String, color: Int) {
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(tv(label, 11f, t.muted))
+            col.add(tv(value, 17f, color, true), 2)
+            sc.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        cell("Total jarak", Fmt.dec(recs.sumOf { it.km.toDouble() }, 1) + " km", t.accent)
+        cell("Aktivitas", recs.size.toString(), t.text)
+        cell("Total durasi", Fmt.hm(recs.sumOf { it.elapsed }), t.text)
+        r.add(sc, 10)
+
+        r.add(profileRow("▤", "Riwayat", if (recs.isEmpty()) "Belum ada perjalanan" else "${recs.size} perjalanan tersimpan") { showHistory() }, 12)
+        r.add(profileRow("🎨", "Tema", Themes.current(this).name) { showTheme() }, 8)
+        r.add(profileRow("⚙", "Atur", "Target, berat badan, peringatan, cadangan") { showSettings() }, 8)
+
+        r.add(tv("RideTrack Pro • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+            gravity = Gravity.CENTER
+        }, 20)
         show(4, r)
+    }
+
+    // ---------- Grup ----------
+
+    private fun shareText(text: String, chooser: String) {
+        try {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+            }, chooser))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka menu bagikan.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun memberRow(name: String, you: Boolean, onLong: (() -> Unit)?): LinearLayout {
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val dot = tv(name.take(1).uppercase(Locale.getDefault()), 14f, onColor(acc("Sepeda")), true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL; setColor(if (you) t.accent else acc("Sepeda"))
+            }
+        }
+        row.addView(dot, LinearLayout.LayoutParams(dp(34), dp(34)))
+        row.addView(tv(name, 14f, t.text, you), LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
+        if (you) row.addView(tv("KAMU", 10f, t.accent, true))
+        if (onLong != null) row.setOnLongClickListener { onLong(); true }
+        return row
+    }
+
+    /** Grup: buat atau gabung grup dengan kode undangan, daftar teman, dan peta titik kumpul. */
+    private fun showGroup() {
+        val a = acc("Sepeda")
+        val r = column()
+        title(r, "GRUP", "Bersepeda bareng teman")
+
+        if (!GroupStore.inGroup(this)) {
+            val hero = card(t.surface, 18, 24)
+            hero.addView(tv("👥", 30f, t.text))
+            hero.add(tv("Lebih seru bersama.", 22f, t.text, true), 6)
+            hero.add(tv("Mulai grup, bagikan kode undangan kepada teman, dan tandai titik kumpul di peta.", 13f, t.muted), 6)
+            hero.add(btn("+   Buat grup", t.accent, 24) {
+                askText("Nama grup", "Contoh: Gowes Minggu Pagi", "") {
+                    GroupStore.create(this, it); showGroup()
+                }
+            }, 14, 0f, dp(50))
+            r.add(hero, 12)
+
+            val jc = card(t.surface, 16, 20)
+            jc.addView(tv("Gabung grup teman", 16f, t.text, true))
+            jc.add(tv("Kode undangan", 12f, t.muted), 8)
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            val input = EditText(this).apply {
+                hint = "Contoh: RIDE42"
+                setHintTextColor(t.muted)
+                setTextColor(t.text)
+                setSingleLine(true)
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                filters = arrayOf<android.text.InputFilter>(android.text.InputFilter.LengthFilter(8))
+                setPadding(dp(14), 0, dp(14), 0)
+                background = box(t.bg, 14, true)
+            }
+            row.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+            row.addView(btn("Gabung", t.surface2, 14) {
+                val code = GroupStore.cleanCode(input.text.toString())
+                if (code == null) {
+                    Toast.makeText(this, "Kode terdiri dari 4–8 huruf atau angka.", Toast.LENGTH_SHORT).show()
+                } else {
+                    GroupStore.join(this, code); showGroup()
+                }
+            }, LinearLayout.LayoutParams(dp(96), dp(48)).apply { leftMargin = dp(10) })
+            jc.add(row, 6)
+            r.add(jc, 10)
+        } else {
+            val code = GroupStore.code(this)
+            val gc = card(t.surface, 16, 20)
+            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            head.addView(tv("Grup perjalanan", 16f, t.text, true), LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(tv("GRUP LOKAL", 10f, t.good, true).apply {
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = box((t.good and 0x00FFFFFF) or 0x26000000, 12)
+            })
+            gc.addView(head)
+            val info = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            left.addView(tv(GroupStore.name(this), 15f, t.text, true))
+            left.add(mono(tv("Kode: $code", 13f, a, true)), 2)
+            info.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
+            info.addView(btn("Kode", t.surface2, 14) {
+                shareText("Gabung grup bersepeda saya di RideTrack Pro. Kode undangan: $code", "Bagikan kode undangan")
+            }, LinearLayout.LayoutParams(dp(88), dp(44)))
+            gc.add(info, 12)
+
+            gc.add(tv("ANGGOTA", 11f, t.muted, true), 14)
+            gc.addView(memberRow(ProfileStore.displayName(this), true, null))
+            for (m in GroupStore.members(this)) {
+                gc.addView(memberRow(m, false) {
+                    confirm("Hapus $m dari daftar?") { GroupStore.removeMember(this, m); showGroup() }
+                })
+            }
+            gc.add(btn("+   Tambah teman", t.surface2, 14) {
+                askText("Nama teman", "Contoh: Budi", "") { GroupStore.addMember(this, it); showGroup() }
+            }, 8, 0f, dp(44))
+            gc.add(tv("Tekan lama nama teman untuk menghapus.", 11f, t.muted), 6)
+            r.add(gc, 12)
+
+            // Peta grup: posisi saya dan titik kumpul
+            val mc = card(t.surface, 12, 20)
+            mc.addView(tv("Peta grup", 16f, t.text, true))
+            mc.add(tv("Posisimu dan titik kumpul tampil di peta.", 12f, t.muted), 2)
+            val mp = MapPanel(this, t, a, false, false, "bike", true)
+            groupMap = mp
+            fun drawMeet() {
+                mp.clearPoints()
+                GroupStore.meet(this)?.let { mp.markPoint(it[0], it[1], "Titik kumpul") }
+            }
+            mp.onMapReady = {
+                drawMeet()
+                val fix = TrackerState.lastFix
+                if (fix != null) mp.position(fix.latitude, fix.longitude)
+                else GroupStore.meet(this)?.let { mp.focusPoint(it[0], it[1]) }
+            }
+            mc.add(mp, 10, 0f, dp(280))
+            val row = LinearLayout(this)
+            row.addView(btn("📍 Titik kumpul", a, 16) {
+                val fix = TrackerState.lastFix
+                if (fix == null) {
+                    Toast.makeText(this, "Menunggu sinyal GPS…", Toast.LENGTH_SHORT).show()
+                } else {
+                    GroupStore.setMeet(this, fix.latitude, fix.longitude)
+                    drawMeet()
+                    Toast.makeText(this, "Titik kumpul ditandai di posisimu sekarang.", Toast.LENGTH_SHORT).show()
+                }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f))
+            row.addView(btn("⤴ Bagikan", t.surface2, 16) {
+                val meet = GroupStore.meet(this)
+                val fix = TrackerState.lastFix
+                val lines = ArrayList<String>()
+                lines.add("Grup ${GroupStore.name(this)} (kode $code)")
+                if (meet != null) lines.add(String.format(Locale.US, "Titik kumpul: https://maps.google.com/?q=%.6f,%.6f", meet[0], meet[1]))
+                if (fix != null) lines.add(String.format(Locale.US, "Posisi saya: https://maps.google.com/?q=%.6f,%.6f", fix.latitude, fix.longitude))
+                if (meet == null && fix == null) {
+                    Toast.makeText(this, "Belum ada posisi atau titik kumpul untuk dibagikan.", Toast.LENGTH_SHORT).show()
+                } else {
+                    shareText(lines.joinToString("\n"), "Bagikan lokasi")
+                }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
+            mc.add(row, 10)
+            if (GroupStore.meet(this) != null) {
+                mc.add(tv("Hapus titik kumpul", 12f, t.bad, true).apply {
+                    setPadding(0, dp(6), 0, dp(2))
+                    setOnClickListener { GroupStore.clearMeet(this@MainActivity); drawMeet(); showGroup() }
+                }, 6)
+            }
+            r.add(mc, 10)
+
+            r.add(btn("Keluar dari grup", t.surface, 16) {
+                confirm("Keluar dari grup ini? Daftar teman dan titik kumpul ikut terhapus.", "Keluar") {
+                    GroupStore.leave(this); showGroup()
+                }
+            }, 10, 0f, dp(48))
+        }
+
+        val note = card(t.surface, 12, 16)
+        note.addView(tv("Catatan: grup di versi ini hanya tersimpan di HP. Teman bergabung dengan kode yang sama, " +
+            "tetapi posisi mereka secara langsung belum tampil karena butuh server dan aplikasi teman yang terhubung. " +
+            "Gunakan tombol Bagikan untuk mengirim posisi dan titik kumpul lewat WhatsApp.", 12f, t.muted))
+        r.add(note, 10)
+        show(3, r)
+        startIdleGps()
     }
 
     // ---------- Cadangan riwayat dan pengaturan baterai ----------
 
     private val reqImport = 4711
+    private val reqPhoto = 4712
 
     private fun exportHistory() {
         val list = rawRecords()
@@ -2060,6 +2370,15 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reqPhoto && resultCode == RESULT_OK) {
+            val picked = data?.data ?: return
+            if (ProfileStore.savePhoto(this, picked)) {
+                showProfile()
+            } else {
+                Toast.makeText(this, "Foto tidak bisa dibaca.", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         if (requestCode != reqImport || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         try {
@@ -2104,6 +2423,7 @@ class MainActivity : Activity() {
         when {
             running -> moveTaskToBack(true)
             inDetail -> showHistory()
+            profileSub -> showProfile()
             currentTab == -1 && mulaiScreen -> showHome()
             currentTab > 0 -> showHome()
             else -> super.onBackPressed()
@@ -2113,7 +2433,8 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         stopIdleGps()
-        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null; surveyMap?.release(); surveyMap = null
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
+        groupMap?.release(); groupMap = null
         super.onDestroy()
     }
 }
