@@ -49,7 +49,7 @@ object ShareCard {
             sb.append("\nTitik start: https://maps.google.com/?q=")
                 .append(String.format(Locale.US, "%.5f,%.5f", s[0], s[1]))
         }
-        sb.append("\n#RideTrackPro")
+        sb.append("\n#Delaas")
         return sb.toString()
     }
 
@@ -65,7 +65,7 @@ object ShareCard {
         p.color = accent
         p.textSize = 34f
         p.letterSpacing = 0.3f
-        c.drawText("RIDETRACK PRO", 70f, 100f, p)
+        c.drawText("DELAAS", 70f, 100f, p)
         p.letterSpacing = 0f
 
         p.color = t.text
@@ -124,7 +124,7 @@ object ShareCard {
         p.color = t.muted
         p.textSize = 28f
         p.textAlign = Paint.Align.CENTER
-        c.drawText("Dibagikan dari RideTrack Pro", w / 2f, h - 36f, p)
+        c.drawText("Dibagikan dari Delaas", w / 2f, h - 36f, p)
         return bmp
     }
 
@@ -185,9 +185,9 @@ object ShareCard {
             try {
                 val bmp = render(t, accent, d)
                 val cv = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, "RideTrack_" + System.currentTimeMillis() + ".png")
+                    put(MediaStore.Images.Media.DISPLAY_NAME, "Delaas_" + System.currentTimeMillis() + ".png")
                     put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/RideTrack")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Delaas")
                 }
                 val u = a.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
                 if (u != null) {
