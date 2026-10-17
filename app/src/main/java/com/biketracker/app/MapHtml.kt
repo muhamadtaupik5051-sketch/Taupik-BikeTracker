@@ -126,7 +126,8 @@ object MapHtml {
                 .lb { position: absolute; left: 10px; top: 176px; z-index: 1000; border-radius: 14px;
                       background: rgba(20,28,36,0.92); color: #fff; font: 600 12px sans-serif;
                       box-shadow: 0 1px 4px rgba(0,0,0,0.4); -webkit-tap-highlight-color: transparent; }
-                .lb .t { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+                .lb .t { min-width: 34px; height: 34px; padding: 0 12px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 16px; }
+                .lb .t span { font: 700 12px sans-serif; }
                 .lb .m { display: none; padding: 2px 6px 6px; }
                 .lb.open .m { display: block; }
                 .lb .h { padding: 6px 8px 2px; font-size: 10px; opacity: 0.65; }
@@ -152,7 +153,7 @@ object MapHtml {
                 <svg id="elv_b" width="110" height="6" style="display:block;margin-top:2px"></svg>
               </div>
               <div id="lb" class="lb">
-                <div class="t" onclick="lbToggle()">&#128506;</div>
+                <div class="t" onclick="lbToggle()">&#128506;<span>Gaya</span></div>
                 <div class="m">
                   <div class="h">GAYA PETA</div>
                   <div class="o" id="st_osm" onclick="setStyle('osm')">Standar</div>
