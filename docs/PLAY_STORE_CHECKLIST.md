@@ -17,6 +17,8 @@ Jalankan workflow, lalu unduh artifact **Delaas-AAB** (`app-release.aab`) dan un
 ## 3. Isian Play Console
 - **Kebijakan privasi**: unggah `docs/PRIVACY_POLICY.md` ke GitHub Pages atau situs lain, lalu tempel URL-nya.
 - **Data safety**: lokasi presisi dikumpulkan untuk fungsi inti aplikasi; data tidak dibagikan ke pihak ketiga dan tidak dikirim ke server pengembang (disimpan di perangkat). Peta memuat tile dari OpenStreetMap/Esri.
+- **Data safety (tambahan)**: nama dan foto profil, nama grup, daftar teman, dan titik kumpul hanya disimpan di perangkat dan tidak dikirim ke server pengembang, jadi tidak dihitung sebagai data yang dikumpulkan. Jawaban untuk lokasi presisi tetap "dikumpulkan, tidak dibagikan, hanya di perangkat". Pastikan jawabannya sama dengan `docs/PRIVACY_POLICY.md`.
+- **Penjelasan izin**: aplikasi menampilkan dialog penjelasan sebelum meminta izin lokasi dan notifikasi. Ambil tangkapan layar dialog ini bila Play Console meminta bukti.
 - **Foreground service (lokasi)**: jelaskan bahwa layanan lokasi latar depan dipakai untuk merekam rute saat layar mati, dan sertakan video pendek menunjukkan tombol Mulai → rekaman berjalan dengan notifikasi.
 - **Kategori**: Kesehatan & kebugaran. **Iklan**: tidak ada.
 - **Aset toko**: ikon 512×512, feature graphic 1024×500, minimal 2 screenshot HP.
@@ -28,3 +30,6 @@ Jalankan workflow, lalu unduh artifact **Delaas-AAB** (`app-release.aab`) dan un
 - Matikan data seluler: peta bisa kosong di area baru (cache hanya area yang pernah dibuka), tetapi rekaman harus tetap jalan.
 - Ekspor GPX lalu impor ke Strava/Garmin Connect untuk memastikan waktu dan tinggi terbaca.
 - Uji di HP Xiaomi/Oppo/Vivo bila ada (pengecualian baterai).
+- Matikan GPS di pengaturan HP lalu tekan Mulai: harus muncul dialog "GPS HP sedang mati". Matikan GPS di tengah rekaman: notifikasi harus menampilkan peringatan GPS mati.
+- Impor file GPX dari Strava/Garmin (Pengaturan > Impor aktivitas dari file GPX): aktivitas muncul di Riwayat dengan rute dan grafik.
+- Putar layar peta ke lanskap: peta mengisi layar dan tidak memuat ulang.
