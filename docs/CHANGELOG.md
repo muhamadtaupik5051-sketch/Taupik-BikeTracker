@@ -1,5 +1,12 @@
 # Catatan perubahan
 
+## 3.70
+- **Target Android 16 (API 36)**, wajib untuk Google Play sejak 31 Agustus 2026. Alat build dinaikkan (Android Gradle Plugin 8.9.1, Gradle 8.11.1).
+- **Kedip flash**: lampu flash berkedip 2× cepat berkala (Pengaturan); jeda bisa diatur dari 10 detik sampai 5 menit (bawaan 60 detik).
+- **Peta (halaman Rute)**: tombol **Gaya** untuk gaya peta; panel Rencana rute bisa dilipat; tombol sekunder dipindah ke menu **Lainnya**; kontras tombol dan teks diperbaiki.
+- Kebijakan privasi dan daftar periksa Play diperbarui (kamera/flash, target API).
+- Perbaikan: izin kamera tidak lagi bentrok dengan izin lokasi; pembersihan kode tak terpakai.
+
 ## 3.69
 - **Rute tersimpan**: layar baru di Profil > Rute tersimpan. Daftar kartu dengan peta mini, jarak, tanjakan, perkiraan waktu, dan jumlah diikuti; cari nama, saring per Sepeda/Motor/Lari/Jalan atau Favorit, tandai bintang.
 - **Detail rute**: peta jalur, profil tinggi, tombol **Ikuti rute** (jadi garis panduan dan membuka layar Mulai), Ekspor GPX, Ganti nama, Hapus, dan Matikan panduan.
