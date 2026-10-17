@@ -1,5 +1,13 @@
 # Catatan perubahan
 
+## 3.60
+- Menu bawah baru: **Beranda, Rute, Rekam, Grup, Profil**.
+- Mode baru **Motor** (beranda, rekam, riwayat, target jarak, batas kecepatan 180 km/jam; kalori tidak dihitung).
+- **Rekam**: halaman Utama, Rute, Grafik; speedometer Sepeda/Motor punya pilihan **Analog atau Digital** (pilihan diingat).
+- **Grup** (lokal): buat atau gabung dengan kode undangan, daftar teman, peta grup dengan **titik kumpul**, bagikan posisi dan titik kumpul. Posisi teman real-time belum ada (butuh server).
+- **Profil**: foto dan nama, ringkasan, serta jalan masuk ke **Riwayat**, **Tema**, dan **Atur**.
+- Pembersihan: kode survei lama yang tidak terpakai, gaya `AppTheme` yang tidak dipakai, gambar bawaan Leaflet, dan metadata Kotlin tidak ikut dikemas.
+
 ## 3.41
 - Riwayat disimpan di **database SQLite** (migrasi otomatis dari penyimpanan lama; teks lama tetap sebagai cadangan sampai "Hapus semua riwayat").
 - Layar Riwayat menampilkan **Rekor pribadi**; Pengaturan punya **Ekspor CSV**.
