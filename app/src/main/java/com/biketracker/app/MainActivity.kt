@@ -1147,16 +1147,27 @@ class MainActivity : Activity() {
             }
             top.addView(seg, LinearLayout.LayoutParams(-2, dp(44)))
         }
-        val gps = tv(gpsStatus, 11f, t.good, true).apply { gravity = Gravity.CENTER }
-        gpsText = gps
-        top.addView(gps, LinearLayout.LayoutParams(0, -2, 1f))
-        top.addView(tv("⌖", 20f, t.text).apply {
-            contentDescription = "Buka peta"
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
-            setOnClickListener { openMap() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        header.addView(top)
+        if (mulaiScreen) {
+            val gps = tv(gpsStatus, 11f, t.good, true).apply { gravity = Gravity.CENTER }
+            gpsText = gps
+            top.addView(gps, LinearLayout.LayoutParams(0, -2, 1f))
+            top.addView(tv("⌖", 20f, t.text).apply {
+                contentDescription = "Buka peta"
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
+                setOnClickListener { openMap() }
+            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            header.addView(top)
+        } else {
+            // Beranda: sapaan di paling atas, lalu pilihan kegiatan.
+            header.addView(tv("Aktivitasmu,", 28f, t.text, true))
+            header.addView(tv("petualanganmu.", 28f, a, true))
+            header.add(tv("Pilih kegiatan, tentukan target, lalu mulai perjalananmu.", 13f, t.muted), 6)
+            header.add(btn(if (running) "Lihat aktivitas  →" else "Mulai aktivitas  →", a, 24) {
+                if (running) goTrackPage(0) else showMulai()
+            }, 12, 0f, dp(48))
+            header.add(top, 12)
+        }
 
         val tabViews = ArrayList<TextView>()
         lateinit var pager: PagerScroll
