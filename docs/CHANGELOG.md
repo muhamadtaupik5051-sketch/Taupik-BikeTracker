@@ -1,5 +1,15 @@
 # Catatan perubahan
 
+## 3.68
+- **GPS mati**: tombol Mulai memeriksa GPS dan menampilkan dialog dengan jalan pintas ke pengaturan Lokasi. Kalau GPS dimatikan di tengah rekaman, notifikasi menampilkan peringatan. Halaman peta juga memberi tahu.
+- **Penjelasan izin** ditampilkan sebelum dialog izin lokasi dan notifikasi (syarat Google Play).
+- **Peta lebih aman**: tautan di dalam peta dibuka di peramban (peta tidak pindah halaman), akses berkas lokal dimatikan, dan kalau proses WebView mati aplikasi tidak ikut tertutup.
+- **Impor GPX**: Pengaturan > Impor aktivitas dari file GPX (Strava, Garmin, aplikasi lain, atau ekspor Delaas). Jarak, durasi, kecepatan, tanjakan, rute, dan grafik dihitung dari file.
+- **Peta** bisa diputar ke lanskap (dan tidak dimuat ulang saat diputar). Halaman lain tetap portrait.
+- Kebijakan privasi dan daftar periksa Play diperbarui (profil, grup, suara, impor).
+- Unit test bertambah (impor GPX, format baris riwayat, kode grup, format waktu) dan **sekarang wajib lulus** di build GitHub.
+- Kode: data riwayat (Rec, RecordDb, RecordStore) dipindah ke `Records.kt`; teks baru ada di `strings.xml`.
+
 ## 3.67
 - Nama aplikasi diganti menjadi **Delaas** (nama di layar HP, notifikasi, kartu bagikan, nama file ekspor, dan folder Download/Delaas). ID paket dan database tidak berubah, jadi bisa langsung menimpa versi lama dan riwayat tetap ada.
 
