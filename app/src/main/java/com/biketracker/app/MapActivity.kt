@@ -2,1045 +2,2803 @@ package com.biketracker.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.view.Gravity
-import android.view.MotionEvent
-import android.widget.ScrollView
-import android.widget.Toast
 import android.view.View
-import android.webkit.JavascriptInterface
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
+import android.view.ViewOutlineProvider
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/**
- * Peta GPS (OpenStreetMap / Satelit + Leaflet). Tiga mode:
- * 1. Riwayat   : menampilkan rute satu perjalanan (extra "route" = lat,lon,lat,lon,... + ringkasan)
- * 2. Live      : saat tracking berjalan, rute diambil dari TrackerState
- * 3. Biasa     : menampilkan posisi saat ini
- */
-class MapActivity : Activity() {
+class MainActivity : Activity() {
 
     private lateinit var t: AppTheme
-    private lateinit var mapView: WebView
-    private lateinit var statusText: TextView
-    private lateinit var locationManager: LocationManager
+
+    private var mode: String
+        get() = TrackerState.mode
+        set(v) { TrackerState.mode = v }
+    private var currentTab = 0
+    private var filter = "Semua"
+    private var digitalMode = false
+    /** Halaman di bawah Profil (Riwayat, Tema, Atur): tombol kembali menuju Profil. */
+    private var profileSub = false
+    private var groupMap: MapPanel? = null
+    private var inDetail = false
+    private var pendingResume = false
+    private var splashDone = false
+    private var trackPage = 0
+    private var mulaiScreen = false
+    private var routeFilter = "Semua"
+    private var routeQuery = ""
+    private var routeDetail = false
+    private var routesRefill: () -> Unit = {}
+    /** Status jeda yang sedang tampil di layar; dipakai untuk menyegarkan layar kalau berubah dari notifikasi. */
+    private var shownPaused = false
+    private var goTrackPage: (Int) -> Unit = {}
+    private val modes = listOf("Sepeda", "Motor", "Lari", "Jalan")
+
+    // Status pelacakan disimpan di TrackerState supaya tetap hidup bersama TrackingService.
+    private val running get() = TrackerState.running
+    private val paused get() = TrackerState.paused
+    private val distanceMeters get() = TrackerState.distanceMeters
+    private val speedKmh get() = TrackerState.speedKmh
+    private val maxSpeedKmh get() = TrackerState.maxSpeedKmh
+    private val climbM get() = TrackerState.climbM
+    private val gpsStatus get() = TrackerState.gpsStatus
+    private val route get() = TrackerState.route
+
+    // View layar tracking. Sebagian hanya ada di mode tertentu, jadi dibuat nullable.
+    private var gauge: GaugeView? = null
+    private var ring: RingView? = null
+    private var targetBar: SegBar? = null
+    private var targetValue: TextView? = null
+    private var targetPct: TextView? = null
+    private var targetInfo: TextView? = null
+    private var gpsText: TextView? = null
+    private var distanceText: TextView? = null
+    private var timeText: TextView? = null
+    private var avgText: TextView? = null
+    private var maxText: TextView? = null
+    private var kcalText: TextView? = null
+    private var climbText: TextView? = null
+    private var speedText: TextView? = null
+    private var cadenceText: TextView? = null
+    private var paceNowText: TextView? = null
+    private var paceAvgText: TextView? = null
+    private var paceBestText: TextView? = null
+    private var ringInfo: TextView? = null
+    private var splitsBox: LinearLayout? = null
+    private var trackMap: MapPanel? = null
+    private var chartMap: MapPanel? = null
+    private var chartDistText: TextView? = null
+    private var chartTimeText: TextView? = null
+    private var chartKcalText: TextView? = null
+    private var routeDistText: TextView? = null
+    private var routeTimeText: TextView? = null
+    private var routeGauge: GaugeView? = null
+    private var routeAvgText: TextView? = null
+    private var routeMaxText: TextView? = null
+    private var routeKcalText: TextView? = null
+    private var routeClimbText: TextView? = null
+    private var routeTarget: TextView? = null
+    private var routePct: TextView? = null
+    private var routeBar: SegBar? = null
+    private var routeBanner: TextView? = null
+    private var chart: ChartView? = null
+    private var chartAvgText: TextView? = null
+    private var chartMaxText: TextView? = null
+
     private val handler = Handler(Looper.getMainLooper())
+    private val prefs by lazy { getSharedPreferences("bike_history", MODE_PRIVATE) }
+    private val store by lazy { RecordStore(this, prefs) }
 
-    private var accentColor = 0
-    private var accentHex = "#26be7d"
-    private var mode = "Sepeda"
-    private var pageReady = false
-    private var viewRoute: List<DoubleArray>? = null
-    private var sent = 0
-    private var firstFix = true
-    private var ownGps = false
-    private var satellite = false
-
-    private val tabs = ArrayList<TextView>()
-    private var distV: TextView? = null
-    private var timeV: TextView? = null
-    private var labelC: TextView? = null
-    private var valueC: TextView? = null
-    private var labelD: TextView? = null
-    private var valueD: TextView? = null
-
-    private val ticker = object : Runnable {
+    private val timer = object : Runnable {
         override fun run() {
-            liveUpdate()
-            handler.postDelayed(this, 1000)
-        }
-    }
-
-    private val gpsListener = object : LocationListener {
-        override fun onLocationChanged(location: Location) {
-            lastLoc = location
-            if (!mapFree()) return
-            if (location.accuracy > 30f) {
-                statusText.text = "GPS mencari sinyal yang lebih akurat..."
-                return
-            }
-            statusText.text = "Posisi saat ini • GPS ±${location.accuracy.toInt()} m"
-            if (pageReady) {
-                mapView.evaluateJavascript(
-                    String.format(Locale.US, "setPosition(%.6f,%.6f,%b)", location.latitude, location.longitude, firstFix),
-                    null
-                )
-                firstFix = false
-            }
-        }
-
-        @Suppress("DEPRECATION")
-        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-
-        override fun onProviderEnabled(provider: String) {
-            if (mapFree()) statusText.text = "GPS aktif • Menunggu lokasi..."
-        }
-
-        override fun onProviderDisabled(provider: String) {
-            if (mapFree()) statusText.text = "GPS mati • Aktifkan lokasi HP"
-        }
-    }
-
-    /** Dipanggil dari JavaScript (thread lain), jadi selalu dipindah ke main thread. */
-    inner class Bridge {
-        @JavascriptInterface
-        fun onReady() {
-            handler.post {
-                pageReady = true
-                onMapReady()
-            }
-        }
-
-        @JavascriptInterface
-        fun onPlan(dist: Double, count: Int, snapped: Boolean, err: Boolean, json: String) {
-            handler.post { onPlanChanged(dist, count, snapped, err, json) }
-        }
-
-        @JavascriptInterface
-        fun onGeo(geo: String) {
-            handler.post { planGeo = geo }
-        }
-
-        @JavascriptInterface
-        fun onLongPress(lat: Double, lon: Double) {
-            handler.post { longPressDialog(lat, lon) }
-        }
-
-        @JavascriptInterface
-        fun onMsg(m: String) {
-            handler.post { Toast.makeText(this@MapActivity, m, Toast.LENGTH_SHORT).show() }
-        }
-
-        @JavascriptInterface
-        fun onFail() {
-            handler.post {
-                statusText.text = "Peta butuh internet dan belum bisa dimuat. Rute tetap direkam."
+            if (running) {
+                if (currentTab == -1 && paused != shownPaused) {
+                    showTracking() // menggambar ulang layar dan memasang timer lagi
+                    return
+                }
+                if (!paused) refreshTracking()
+                handler.postDelayed(this, 1000)
             }
         }
     }
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    private fun round(color: Int, r: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = dp(r).toFloat()
-    }
-
-    private fun mapButton(label: String, action: () -> Unit) = TextView(this).apply {
-        text = label
-        textSize = 15f
-        setTextColor(t.text)
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
-        elevation = dp(4).toFloat()
-        setOnClickListener { action() }
-    }
-
-    private fun styleTabs() {
-        tabs.forEachIndexed { i, v ->
-            val sel = (i == 1) == satellite
-            v.setTextColor(if (sel) onColor(accentColor) else t.muted)
-            v.background = if (sel) round(accentColor, 15) else null
+    /** Dipanggil dari navigasi bawah di layar peta: buka tab yang dipilih. */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent?.getBooleanExtra("finish", false) == true) {
+            intent?.removeExtra("finish")
+            if (running) finishTracking()
+            return
+        }
+        if (intent?.getBooleanExtra("routes", false) == true) {
+            intent?.removeExtra("routes")
+            showRoutes()
+            return
+        }
+        when (intent?.getIntExtra("tab", -1) ?: -1) {
+            0 -> showHome()
+            2 -> showMulai()
+            3 -> showGroup()
+            4 -> showProfile()
         }
     }
-
-    private fun applyLayer() {
-        styleTabs()
-        if (pageReady) {
-            mapView.evaluateJavascript("setLayer('${if (satellite) "sat" else "osm"}')", null)
-        }
-    }
-
-    private fun statBox(label: String): Triple<View, TextView, TextView> {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = round(t.bg, 14)
-        }
-        val l = TextView(this).apply { text = label; textSize = 11f; setTextColor(t.muted) }
-        val v = TextView(this).apply {
-            text = "--"; textSize = 17f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
-        }
-        box.addView(l)
-        box.addView(v, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
-        return Triple(box, l, v)
-    }
-
-    private fun legendChip(color: Int, label: String): View {
-        val chip = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(12), dp(6))
-            background = round(t.bg, 16)
-        }
-        chip.addView(View(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
-        }, LinearLayout.LayoutParams(dp(10), dp(10)))
-        chip.addView(TextView(this).apply {
-            text = label; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
-        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
-        return chip
-    }
-
-    private fun goTab(tab: Int) {
-        val i = android.content.Intent(this, MainActivity::class.java)
-        i.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        i.putExtra("tab", tab)
-        startActivity(i)
-        finish()
-    }
-
-    private fun bottomNav(): View = buildNavBar(this, t, 1) { i -> if (i != 1) goTab(i) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyTheme()
+        digitalMode = prefs.getBoolean("digital", false)
+        when {
+            // Service masih berjalan (mis. aplikasi dibuka lagi dari notifikasi)
+            TrackerState.running -> {
+                splashDone = true
+                mulaiScreen = true
+                showTracking()
+                if (savedInstanceState == null && intent?.getBooleanExtra("finish", false) == true) {
+                    intent.removeExtra("finish")
+                    finishTracking()
+                }
+            }
+            savedInstanceState == null -> showSplash()
+            else -> {
+                splashDone = true
+                showHome()
+                checkSavedSession()
+            }
+        }
+    }
 
-        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+    override fun onResume() {
+        super.onResume()
+        if ((currentTab == -1 || currentTab == 3) && !running) startIdleGps()
+        trackMap?.onResume(); chartMap?.onResume(); groupMap?.onResume()
+        if (running && currentTab == -1) {
+            handler.removeCallbacks(timer)
+            handler.post(timer)
+        }
+    }
 
+    override fun onPause() {
+        stopIdleGps()
+        trackMap?.onPause(); chartMap?.onPause(); groupMap?.onPause()
+        handler.removeCallbacks(timer)
+        super.onPause()
+    }
+
+    private fun showSplash() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(t.bg)
+        }
+        root.addView(tv("🚴", 64f, t.text).apply { gravity = Gravity.CENTER })
+        root.add(tv("R I D E T R A C K   P R O", 13f, t.accent, true).apply { gravity = Gravity.CENTER }, 14)
+        root.add(tv("MUHAMAD TAUPIK", 24f, t.text, true).apply { gravity = Gravity.CENTER }, 6)
+        setContentView(root)
+
+        val goHome = Runnable {
+            if (!splashDone && !isFinishing) {
+                splashDone = true
+                showHome()
+                checkSavedSession()
+            }
+        }
+        root.setOnClickListener { handler.removeCallbacksAndMessages(null); goHome.run() }
+        handler.postDelayed(goHome, 1500)
+    }
+
+    /** Jika aplikasi sempat dimatikan sistem saat merekam, tawarkan untuk melanjutkan. */
+    private fun checkSavedSession() {
+        if (TrackerState.running || !TrackerState.hasSaved(this)) return
+        AlertDialog.Builder(this)
+            .setTitle("Aktivitas belum selesai")
+            .setMessage("Ada perjalanan yang belum disimpan karena aplikasi sempat tertutup. Lanjutkan?")
+            .setPositiveButton("Lanjutkan") { _, _ ->
+                if (TrackerState.restore(this)) { trackPage = 0; mulaiScreen = true; showTracking() } else TrackerState.clearSaved(this)
+            }
+            .setNegativeButton("Buang") { _, _ -> TrackerState.clearSaved(this) }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun applyTheme() {
         t = Themes.current(this)
         Themes.styleWindow(this, t)
+    }
 
-        val flat = intent?.getDoubleArrayExtra("route")
-        if (flat != null && flat.size >= 2) {
-            val list = ArrayList<DoubleArray>()
-            var i = 0
-            while (i + 1 < flat.size) {
-                list.add(doubleArrayOf(flat[i], flat[i + 1]))
-                i += 2
-            }
-            viewRoute = list
+    private fun acc(m: String = mode) = Themes.modeAccent(m)
+
+    private fun dim(c: Int) = (c and 0x00FFFFFF) or 0x66000000
+
+    private fun scaleFor(m: String) = when (m) { "Sepeda" -> 60f; "Motor" -> 140f; "Lari" -> 30f; else -> 12f }
+
+    // ---------- UI helpers ----------
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun tv(value: String, size: Float, color: Int, bold: Boolean = false) =
+        TextView(this).apply {
+            text = value; textSize = size; setTextColor(color)
+            if (bold) setTypeface(null, Typeface.BOLD)
         }
-        mode = intent?.getStringExtra("mode") ?: TrackerState.mode
-        accentColor = Themes.modeAccent(mode)
-        accentHex = String.format("#%06X", 0xFFFFFF and accentColor)
-        val showPanel = viewRoute != null || TrackerState.running
-        val page1 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val root = LinearLayout(this).apply {
+    private fun mono(v: TextView): TextView {
+        v.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        return v
+    }
+
+    private fun box(color: Int, r: Int = 18, line: Boolean = false) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(r).toFloat()
+        if (line) setStroke(dp(1), t.surface2)
+    }
+
+    private fun card(color: Int = t.surface, pad: Int = 16, r: Int = 20) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(pad), dp(pad), dp(pad), dp(pad))
+        background = box(color, r, true)
+    }
+
+    private fun LinearLayout.add(v: View, top: Int = 0, weight: Float = 0f, height: Int = -2) {
+        addView(v, LinearLayout.LayoutParams(if (weight > 0f) 0 else -1, height, weight).apply {
+            topMargin = dp(top)
+        })
+    }
+
+    private fun column() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(20), dp(18), dp(20), dp(20))
+        setBackgroundColor(t.bg)
+    }
+
+    private fun btn(label: String, fill: Int, radius: Int = 16, action: () -> Unit) = Button(this).apply {
+        text = label; textSize = 14f; isAllCaps = false
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(onColor(fill))
+        background = box(fill, radius, fill == t.surface)
+        stateListAnimator = null
+        setOnClickListener { action() }
+    }
+
+    private fun show(tab: Int, body: LinearLayout, sub: Boolean = false) {
+        stopIdleGps()
+        Themes.keepAwake(this, false)
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
+        groupMap?.release(); groupMap = null
+        currentTab = tab
+        profileSub = sub
+        inDetail = false
+        routeDetail = false
+        val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(t.bg)
             setOnApplyWindowInsetsListener { v, i ->
                 v.setPadding(0, i.systemWindowInsetTop, 0, i.systemWindowInsetBottom); i
             }
         }
+        val scroll = ScrollView(this).apply { isFillViewport = true; addView(body) }
+        outer.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        if (tab >= 0) outer.addView(navBar(tab))
+        setContentView(outer)
+        outer.requestApplyInsets()
+    }
 
-        // Judul + tombol kembali
-        val header = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(8), dp(16), 0)
-        }
-        header.addView(TextView(this).apply {
-            text = "←"
-            textSize = 24f
-            setTextColor(t.text)
-            gravity = Gravity.CENTER
-            setOnClickListener { finish() }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        header.addView(TextView(this).apply {
-            text = if (viewRoute != null) "Rute Aktivitas" else "Rute"
-            textSize = 18f
-            setTextColor(t.text)
-            typeface = Typeface.DEFAULT_BOLD
+    private fun navBar(sel: Int): LinearLayout = buildNavBar(this, t, sel) { i ->
+        when (i) { 0 -> showHome(); 1 -> openMap(); 2 -> showMulai(); 3 -> showGroup(); else -> showProfile() }
+    }
+
+    private fun title(r: LinearLayout, small: String, big: String) {
+        r.add(tv(small, 11f, t.accent, true))
+        r.add(tv(big, 24f, t.text, true), 2)
+    }
+
+    /** Tautan kembali di atas halaman yang berada di bawah Profil. */
+    private fun backToProfile(r: LinearLayout) {
+        r.add(tv("‹  Profil", 13f, t.accent, true).apply {
+            setPadding(0, 0, dp(16), dp(8))
+            setOnClickListener { showProfile() }
         })
-        root.addView(header)
-
-        // Tab Peta | Satelit
-        val tabRow = LinearLayout(this).apply {
-            background = round(t.surface, 18)
-            setPadding(dp(3), dp(3), dp(3), dp(3))
-        }
-        listOf("Peta", "Satelit").forEachIndexed { i, name ->
-            val v = TextView(this).apply {
-                text = name
-                textSize = 13f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setPadding(dp(18), 0, dp(18), 0)
-                setOnClickListener { satellite = i == 1; applyLayer() }
-            }
-            tabs.add(v)
-            tabRow.addView(v, LinearLayout.LayoutParams(-2, dp(30)))
-        }
-        styleTabs()
-
-        statusText = TextView(this).apply {
-            text = "Menyiapkan peta GPS..."
-            textSize = 11f
-            setTextColor(t.muted)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            background = round((t.surface and 0x00FFFFFF) or 0xDD000000.toInt(), 12)
-        }
-
-        mapView = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            MapHtml.applyCache(this)
-            MapHtml.harden(this)
-            addJavascriptInterface(Bridge(), "Bridge")
-            webViewClient = MapHtml.client(this@MapActivity)
-            // Geser di dalam peta menggeser peta; geser dari tepi kiri/kanan pindah ke halaman Survei.
-            setOnTouchListener { v, e ->
-                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
-                    val edge = 28f * resources.displayMetrics.density
-                    parent?.requestDisallowInterceptTouchEvent(e.x > edge && e.x < v.width - edge)
-                }
-                false
-            }
-        }
-
-        // Peta + tombol zoom dan lokasi di sisi kanan
-        val mapArea = FrameLayout(this)
-        mapArea.addView(mapView, FrameLayout.LayoutParams(-1, -1))
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val gap = dp(6)
-        val bs = dp(34)
-        controls.addView(mapButton("✎") { togglePlan() }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
-        controls.addView(mapButton("⚑") { marksDialog() }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
-        controls.addView(mapButton("+") {
-            if (pageReady) mapView.evaluateJavascript("if(map)map.zoomIn()", null)
-        }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
-        controls.addView(mapButton("−") {
-            if (pageReady) mapView.evaluateJavascript("if(map)map.zoomOut()", null)
-        }, LinearLayout.LayoutParams(bs, bs).apply { bottomMargin = gap })
-        controls.addView(mapButton("◎") {
-            if (pageReady) mapView.evaluateJavascript("locate()", null)
-        }, LinearLayout.LayoutParams(bs, bs))
-        mapArea.addView(controls, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP).apply {
-            rightMargin = dp(10); topMargin = dp(10)
-        })
-        mapArea.addView(tabRow, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
-            leftMargin = dp(10); topMargin = dp(10)
-        })
-        mapArea.addView(statusText, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
-            leftMargin = dp(10); topMargin = dp(52)
-        })
-        mapArea.addView(buildPlanBar(), FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
-            leftMargin = dp(8); rightMargin = dp(8); bottomMargin = dp(8)
-        })
-        page1.addView(mapArea, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        // Ringkasan di bawah peta (hanya untuk rute riwayat dan tracking aktif)
-        if (showPanel) {
-            val panel = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(16), dp(14), dp(16), dp(16))
-                background = GradientDrawable().apply {
-                    setColor(t.surface)
-                    val r = dp(20).toFloat()
-                    cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-                }
-            }
-            val legend = LinearLayout(this)
-            legend.addView(legendChip(0xFF27D282.toInt(), "Start"))
-            legend.addView(legendChip(0xFFFF3B3B.toInt(), "Stop"),
-                LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
-            legend.addView(legendChip(accentColor, "Garis rute"),
-                LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
-            panel.addView(legend)
-
-            panel.addView(TextView(this).apply {
-                text = "Ringkasan Aktivitas"
-                textSize = 14f
-                setTextColor(t.text)
-                typeface = Typeface.DEFAULT_BOLD
-            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(12) })
-
-            val dist = statBox("Jarak")
-            val time = statBox("Durasi")
-            val c = statBox("Rata-rata")
-            val d = statBox("Maksimum")
-            distV = dist.third; timeV = time.third
-            labelC = c.second; valueC = c.third
-            labelD = d.second; valueD = d.third
-            val row1 = LinearLayout(this)
-            row1.addView(dist.first, LinearLayout.LayoutParams(0, -2, 1f))
-            row1.addView(time.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-            val row2 = LinearLayout(this)
-            row2.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f))
-            row2.addView(d.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-            panel.addView(row1, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-            panel.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-            page1.addView(panel)
-
-            if (viewRoute != null) {
-                updateStats(
-                    intent.getFloatExtra("km", 0f),
-                    intent.getLongExtra("elapsed", 0L),
-                    intent.getFloatExtra("avg", 0f),
-                    intent.getFloatExtra("max", 0f)
-                )
-            }
-        }
-
-        // Navigasi bawah, sama seperti di layar utama, supaya tidak hilang saat melihat peta.
-        root.addView(page1, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(bottomNav())
-        setContentView(root)
-
-        mapView.loadDataWithBaseURL(
-            "https://www.openstreetmap.org/",
-            mapHtml(),
-            "text/html",
-            "UTF-8",
-            null
-        )
-
-        // Jika peta belum siap setelah 20 detik, beri tahu pengguna.
-        handler.postDelayed({
-            if (!pageReady) {
-                statusText.text = "Peta belum termuat. Periksa koneksi internet."
-            }
-        }, 20000)
     }
 
-    /** Isi kartu ringkasan. Dua kartu terakhir menyesuaikan aktivitas. */
-    private fun updateStats(km: Float, elapsedMs: Long, avgKmh: Float, maxKmh: Float) {
-        distV?.text = Fmt.dec(km, 2) + " km"
-        timeV?.text = Fmt.time(elapsedMs)
-        when (mode) {
-            "Lari" -> {
-                val pace = if (avgKmh >= 1.5f) (3600f / avgKmh).roundToInt() else null
-                labelC?.text = "Pace rata-rata"
-                valueC?.text = Fmt.pace(pace) + " /km"
-                labelD?.text = "Maksimum"
-                valueD?.text = Fmt.dec(maxKmh, 1) + " km/jam"
-            }
-            "Jalan" -> {
-                labelC?.text = "Langkah"
-                valueC?.text = Fmt.int((km * 1000f * TrackerState.STEPS_PER_METER).roundToInt())
-                labelD?.text = "Rata-rata"
-                valueD?.text = Fmt.dec(avgKmh, 1) + " km/jam"
-            }
-            else -> {
-                labelC?.text = "Rata-rata"
-                valueC?.text = Fmt.dec(avgKmh, 1) + " km/jam"
-                labelD?.text = "Maksimum"
-                valueD?.text = Fmt.dec(maxKmh, 1) + " km/jam"
-            }
-        }
+    private fun icon(m: String) = when (m) { "Sepeda" -> "🚴"; "Motor" -> "🏍️"; "Lari" -> "🏃"; else -> "🚶" }
+
+    private fun statCard(label: String, initial: String, accent: Int = t.text): Pair<View, TextView> {
+        val c = card(t.surface, 10, 14)
+        c.addView(tv(label, 11f, t.muted))
+        val value = tv(initial, 17f, accent, true)
+        c.add(value, 3)
+        return Pair(c, value)
     }
 
-    /** Dipanggil sekali ketika Leaflet sudah siap. */
-    private fun onMapReady() {
-        mapView.evaluateJavascript("setCmpTop(212)", null)
-        applyLayer()
-        val vr = viewRoute
-        when {
-            vr != null -> {
-                statusText.text = String.format(Locale.US, "Rute perjalanan • %d titik", vr.size)
-                mapView.evaluateJavascript("showRoute(${toJson(vr, 0)})", null)
-            }
-            TrackerState.running -> {
-                sent = 0
-                liveUpdate()
-                handler.removeCallbacks(ticker)
-                handler.postDelayed(ticker, 1000)
-            }
-            else -> {}
-        }
-        startOwnGps()
-        for (p in loadPoints()) {
-            mapView.evaluateJavascript(markJs(p), null)
-        }
-        // Rute rencana yang dipilih sebagai panduan (garis putus-putus oranye)
-        val act = prefsSurvey().getString("active_plan", "") ?: ""
-        val pl = loadPlans().firstOrNull { it[0] == act }
-        if (pl != null && viewRoute == null) loadPlanOnMap(pl, false)
-        pendingPlan?.let { loadPlanOnMap(it, true); planOn = true; applyPlanUi(); pendingPlan = null }
-        if (viewRoute == null && !TrackerState.running && !planOn) {
-            planOn = true
-            applyPlanUi()
-        }
+    private fun statRow(r: LinearLayout, l: Pair<View, TextView>, rt: Pair<View, TextView>, top: Int = 8) {
+        val row = LinearLayout(this)
+        row.addView(l.first, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(rt.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        r.add(row, top)
     }
 
-    private fun liveUpdate() {
-        if (!pageReady || !TrackerState.running) return
-        val r = TrackerState.route
-        if (r.size < sent) sent = 0
-        if (r.size > sent) {
-            mapView.evaluateJavascript("addPoints(${toJson(r, sent)})", null)
-            sent = r.size
-        }
-        val km = TrackerState.distanceMeters / 1000f
-        updateStats(km, TrackerState.currentElapsed(), TrackerState.averageSpeed(), TrackerState.maxSpeedKmh)
-        statusText.text = if (TrackerState.paused) {
-            String.format(Locale.US, "Aktivitas dijeda • %d titik", r.size)
-        } else {
-            String.format(Locale.US, "Merekam rute • %d titik", r.size)
-        }
-    }
-
-    private fun toJson(list: List<DoubleArray>, from: Int): String {
-        val sb = StringBuilder("[")
-        for (i in from until list.size) {
-            if (i > from) sb.append(',')
-            sb.append(String.format(Locale.US, "[%.6f,%.6f]", list[i][0], list[i][1]))
-        }
-        return sb.append(']').toString()
-    }
-
-    private fun startOwnGps() {
-        if (ownGps) return
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ),
-                200
-            )
-            if (mapFree()) statusText.text = "Izinkan akses lokasi presisi untuk menampilkan posisi"
-            return
-        }
-        try {
-            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, gpsListener)
-            ownGps = true
-            val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
-            if (mapFree()) statusText.text = if (gpsEnabled) "GPS aktif • Menunggu sinyal..." else getString(R.string.map_gps_off)
-        } catch (e: Exception) {
-            if (mapFree()) statusText.text = "GPS tidak tersedia. Periksa lokasi HP."
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 200) {
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                startOwnGps()
-            } else {
-                statusText.text = "Izin lokasi presisi ditolak. Aktifkan di Pengaturan HP."
-            }
-        }
-    }
-
-    /** Hentikan GPS dan pembaruan saat layar peta tidak terlihat, supaya baterai hemat. */
-    override fun onPause() {
-        handler.removeCallbacks(ticker)
-        try {
-            locationManager.removeUpdates(gpsListener)
-        } catch (e: Exception) {
-        }
-        ownGps = false
-        super.onPause()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        startOwnGps()
-        if (pageReady && viewRoute == null && TrackerState.running) {
-            handler.removeCallbacks(ticker)
-            handler.postDelayed(ticker, 1000)
-        }
-    }
-
-    // ---------- Rencana Rute manual ----------
-    private var planOn = false
-    private var planLoop = false
-    private var planGeo = ""
-    private var loopBtn: TextView? = null
-    private var planRoad = true
-    private var planDist = 0.0
-    private var planCount = 0
-    private var planSnapped = false
-    private var planWps: List<DoubleArray> = emptyList()
-    private var planInfo: TextView? = null
-    private var planRoadBtn: TextView? = null
-    private var planBar: LinearLayout? = null
-    private var pendingPlan: List<String>? = null
-
-    private fun planProfile() = if (mode == "Sepeda" || mode == "Motor") "bike" else "foot"
-
-    /** Rencana tersimpan: id|nama|road(0/1)|profil|jarakM|lat,lon;lat,lon */
-    private fun loadPlans(): MutableList<List<String>> =
-        (prefsSurvey().getString("plans", "") ?: "").lines().filter { it.isNotBlank() }
-            .map { it.split("|") }.filter { it.size >= 6 }.toMutableList()
-
-    private fun savePlans(list: List<List<String>>) {
-        prefsSurvey().edit().putString("plans", list.joinToString("\n") { it.joinToString("|") }).apply()
-    }
-
-    private fun parseWps(s: String): List<DoubleArray> = s.split(";").mapNotNull { q ->
-        val p = q.split(",")
-        val la = p.getOrNull(0)?.toDoubleOrNull()
-        val lo = p.getOrNull(1)?.toDoubleOrNull()
-        if (la != null && lo != null) doubleArrayOf(la, lo) else null
-    }
-
-    private fun loadPlanOnMap(p: List<String>, fit: Boolean) {
-        if (!pageReady) return
-        val wps = parseWps(p[5])
-        planLoop = p.getOrNull(6) == "1"
-        loopBtn?.text = if (planLoop) "⟲ Pulang-pergi" else "→ Sekali jalan"
-        mapView.evaluateJavascript("loadPlan(${toJson(wps, 0)},${p[2] == "1"},'${p[3]}',$fit,$planLoop)", null)
-    }
-
-    private fun onPlanChanged(dist: Double, count: Int, snapped: Boolean, err: Boolean, json: String) {
-        planDist = dist
-        planCount = count
-        planSnapped = snapped
-        val list = ArrayList<DoubleArray>()
-        try {
-            val arr = org.json.JSONArray(json)
-            for (i in 0 until arr.length()) {
-                val q = arr.getJSONArray(i)
-                list.add(doubleArrayOf(q.getDouble(0), q.getDouble(1)))
-            }
-        } catch (e: Exception) {
-        }
-        planWps = list
-        val mode = when {
-            count < 2 -> "ketuk peta untuk menambah titik"
-            !planRoad -> "garis lurus antar titik"
-            err -> "jalan tidak ditemukan, memakai garis lurus"
-            snapped -> "mengikuti jalan"
-            else -> "menghitung jalan…"
-        }
-        val kmh = if (planProfile() == "bike") 16.0 else 5.0
-        val mnt = Math.round(dist / 1000.0 / kmh * 60.0).toInt()
-        val dur = if (mnt >= 60) (mnt / 60).toString() + " j " + (mnt % 60) + " mnt" else "$mnt mnt"
-        planInfo?.text = Fmt.dec(dist / 1000.0, 2) + " km • " + dur + " • " + count + " titik • " + mode
-    }
-
-    /** Daftar rute tersimpan: buka, jadikan garis panduan, buka di Google Maps, atau hapus. */
-    private fun savedPlansDialog() {
-        val plans = loadPlans()
-        if (plans.isEmpty()) {
-            Toast.makeText(this, "Belum ada rute tersimpan.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val active = prefsSurvey().getString("active_plan", "") ?: ""
-        val names = Array(plans.size) { i ->
-            val p = plans[i]
-            (if (p[0] == active) "★ " else "") + p[1] + " · " +
-                Fmt.dec((p[4].toDoubleOrNull() ?: 0.0) / 1000.0, 2) + " km"
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Rute saya")
-            .setItems(names) { _, i ->
-                val p = plans[i]
-                val isActive = p[0] == active
-                val acts = arrayOf(
-                    "Buka di peta",
-                    if (isActive) "Matikan sebagai panduan" else "Jadikan garis panduan (★)",
-                    "Buka di Google Maps",
-                    "Hapus rute"
-                )
-                android.app.AlertDialog.Builder(this)
-                    .setTitle(p[1])
-                    .setItems(acts) { _, k ->
-                        when (k) {
-                            0 -> {
-                                planRoad = p[2] == "1"
-                                if (!planOn) { planOn = true; applyPlanUi() }
-                                loadPlanOnMap(p, true)
-                            }
-                            1 -> {
-                                prefsSurvey().edit().putString("active_plan", if (isActive) "" else p[0]).apply()
-                                if (TrackerState.running) TrackerState.loadGuide(this)
-                                Toast.makeText(this,
-                                    if (isActive) "Panduan dimatikan" else "Dipakai sebagai garis panduan",
-                                    Toast.LENGTH_SHORT).show()
-                            }
-                            2 -> openDirections(parseWps(p[5]), p[3])
-                            else -> {
-                                val all = loadPlans()
-                                all.removeAll { it[0] == p[0] }
-                                savePlans(all)
-                                if (isActive) { prefsSurvey().edit().putString("active_plan", "").apply(); if (TrackerState.running) TrackerState.loadGuide(this) }
-                                Toast.makeText(this, "Rute dihapus", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                    .setNegativeButton("Tutup", null)
-                    .show()
-            }
-            .setNeutralButton("Daftar lengkap") { _, _ -> goRoutes() }
-            .setNegativeButton("Tutup", null)
-            .show()
-    }
-
-    private fun goRoutes() {
-        val i = android.content.Intent(this, MainActivity::class.java)
-        i.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        i.putExtra("routes", true)
-        startActivity(i)
-        finish()
-    }
-
-    private fun longPressDialog(lat: Double, lon: Double) {
-        val la = String.format(Locale.US, "%.6f", lat)
-        val lo = String.format(Locale.US, "%.6f", lon)
-        val items = arrayOf("🟢 Mulai di sini (A)", "🔴 Jadikan titik akhir (B)", "＋ Tambah ke rute")
-        android.app.AlertDialog.Builder(this)
-            .setTitle("$la, $lo")
-            .setItems(items) { _, i ->
-                if (!pageReady) return@setItems
-                val fn = when (i) { 0 -> "startHere"; 1 -> "endHere"; else -> "addWp" }
-                mapView.evaluateJavascript("$fn($la,$lo)", null)
-            }
-            .setNegativeButton("Batal", null)
-            .show()
-    }
-
-    private fun waypointListDialog() {
-        if (planWps.isEmpty()) {
-            Toast.makeText(this, "Belum ada titik. Tekan lama di peta.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val n = planWps.size
-        val names = Array(n) { i ->
-            val tag = if (n > 1 && i == 0) "A" else if (n > 1 && i == n - 1) "B" else (i + 1).toString()
-            tag + "   " + String.format(Locale.US, "%.5f, %.5f", planWps[i][0], planWps[i][1])
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Titik rute")
-            .setItems(names) { _, i ->
-                android.app.AlertDialog.Builder(this)
-                    .setTitle(names[i])
-                    .setItems(arrayOf("Lihat di peta", "Naik", "Turun", "Hapus titik")) { _, k ->
-                        if (!pageReady) return@setItems
-                        when (k) {
-                            0 -> mapView.evaluateJavascript(String.format(Locale.US, "focusMark(%.6f,%.6f)", planWps[i][0], planWps[i][1]), null)
-                            1 -> mapView.evaluateJavascript("moveWp($i,-1)", null)
-                            2 -> mapView.evaluateJavascript("moveWp($i,1)", null)
-                            else -> mapView.evaluateJavascript("removeWp($i)", null)
-                        }
-                    }
-                    .setNegativeButton("Tutup", null)
-                    .show()
-            }
-            .setNegativeButton("Tutup", null)
-            .show()
-    }
-
-    private fun searchDialog() {
-        val et = android.widget.EditText(this).apply {
-            hint = "Nama tempat atau jalan"
-            setSingleLine()
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Cari lokasi")
-            .setView(et)
-            .setPositiveButton("Cari") { _, _ ->
-                val q = et.text.toString().trim()
-                if (q.isNotEmpty() && pageReady) mapView.evaluateJavascript("searchPlace(" + org.json.JSONObject.quote(q) + ")", null)
-            }
-            .setNegativeButton("Batal", null)
-            .show()
-    }
-
-    private fun applyPlanUi() {
-        planBar?.visibility = if (planOn) View.VISIBLE else View.GONE
-        if (planOn && pageReady) {
-            if (mapFree()) statusText.text = "Ketuk peta untuk menambah titik, tekan lama untuk menu titik"
-        }
-        if (pageReady) mapView.evaluateJavascript("setPlan($planOn)", null)
-        planRoadBtn?.text = if (planRoad) "Ikuti jalan: ON" else "Ikuti jalan: OFF"
-    }
-
-    private fun togglePlan() {
-        if (!pageReady) {
-            Toast.makeText(this, "Peta belum siap.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        planOn = !planOn
-        applyPlanUi()
-    }
-
-    /** Tombol bentuk kapsul: latar solid sesuai tema, teks jelas di atas peta. */
-    private fun spill(label: String, fill: Int, danger: Boolean = false, action: () -> Unit) = TextView(this).apply {
-        val main = fill == accentColor
-        text = label
-        textSize = 12.5f
-        typeface = Typeface.DEFAULT_BOLD
+    private fun circleBtn(label: String, action: () -> Unit) = tv(label, 18f, t.text, true).apply {
+        contentDescription = if (label == "+") "Tambah" else "Kurangi"
         gravity = Gravity.CENTER
-        setSingleLine()
-        setPadding(dp(4), 0, dp(4), 0)
-        setTextColor(if (main) 0xFF04202B.toInt() else if (danger) t.bad else t.text)
-        background = GradientDrawable().apply {
-            cornerRadius = dp(12).toFloat()
-            setColor(if (main) accentColor else t.surface2)
-            // Garis tepi tipis supaya tombol terlihat jelas di atas panel yang warnanya mirip.
-            if (!main) setStroke(dp(1), (t.text and 0x00FFFFFF) or 0x40000000)
-        }
-        isClickable = true
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface2) }
         setOnClickListener { action() }
+        layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
     }
 
-    private fun planRow(vararg items: Pair<View, Float>, top: Int = 8): LinearLayout {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        items.forEachIndexed { i, (v, w) ->
-            row.addView(v, LinearLayout.LayoutParams(0, dp(38), w).apply { if (i > 0) leftMargin = dp(8) })
+    private fun stepper(
+        label: String, sub: String, value: String, minus: () -> Unit, plus: () -> Unit,
+        color: Int = t.accent
+    ): LinearLayout {
+        val row = card(t.surface, 12, 16).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        row.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(top) }
+        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        left.addView(tv(label, 13f, t.text, true))
+        left.add(tv(sub, 11f, t.muted), 2)
+        row.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(circleBtn("−", minus))
+        row.addView(mono(tv(value, 16f, color, true)).apply {
+            gravity = Gravity.CENTER; setPadding(dp(10), 0, dp(10), 0)
+        })
+        row.addView(circleBtn("+", plus))
         return row
     }
 
-    private fun buildPlanBar(): View {
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(14))
-            visibility = View.GONE
-            background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor((t.surface and 0x00FFFFFF) or 0xF2000000.toInt())
-                setStroke(dp(1), t.surface2)
-            }
-            elevation = dp(8).toFloat()
-        }
-        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        titleRow.addView(TextView(this).apply {
-            text = "Rencana rute"; textSize = 15f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        val foldBtn = TextView(this).apply {
-            text = "▾ Lipat"; textSize = 12f; setTextColor(t.text); typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(10), dp(4), dp(2), dp(4))
-        }
-        titleRow.addView(foldBtn)
-        bar.addView(titleRow)
-        val info = TextView(this).apply {
-            text = "0,00 km • 0 titik • ketuk peta untuk menambah titik"; textSize = 12.5f
-            setTextColor((t.text and 0x00FFFFFF) or 0xE0000000.toInt())
-        }
-        planInfo = info
-        bar.addView(info, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
-
-        val rb = spill("Ikuti jalan: ON", t.bg) {
-            planRoad = !planRoad
-            planRoadBtn?.text = if (planRoad) "Ikuti jalan: ON" else "Ikuti jalan: OFF"
-            if (pageReady) mapView.evaluateJavascript("setRoad($planRoad,'${planProfile()}')", null)
-        }
-        planRoadBtn = rb
-        bar.addView(planRow(
-            spill("↶ Urungkan", t.bg) { if (pageReady) mapView.evaluateJavascript("undoWp()", null) } to 1f,
-            spill("Hapus semua", t.bg, danger = true) { if (pageReady) mapView.evaluateJavascript("clearPlan()", null) } to 1f,
-            rb to 1.25f,
-            top = 10
-        ))
-
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        // Tombol utama saja di panel; sisanya ada di menu "Lainnya".
-        body.addView(planRow(
-            spill("Simpan rute", accentColor) { savePlanDialog() } to 1.25f,
-            spill("☰ Rute saya", t.bg) { savedPlansDialog() } to 1.1f,
-            spill("⋯ Lainnya", t.bg) { planMoreDialog() } to 1f
-        ))
-        // Baris pertama (Urungkan, Hapus semua, Ikuti jalan) ikut dilipat bersama tombol lain.
-        val firstRow = bar.getChildAt(bar.childCount - 1)
-        bar.removeView(firstRow)
-        body.addView(firstRow, 0)
-        bar.addView(body)
-        foldBtn.setOnClickListener {
-            val folded = body.visibility == View.VISIBLE
-            body.visibility = if (folded) View.GONE else View.VISIBLE
-            foldBtn.text = if (folded) "▴ Buka" else "▾ Lipat"
-        }
-        planBar = bar
-        return bar
+    private fun confirm(msg: String, okLabel: String = "Hapus", ok: () -> Unit) {
+        AlertDialog.Builder(this).setMessage(msg)
+            .setPositiveButton(okLabel) { _, _ -> ok() }
+            .setNegativeButton("Batal", null).show()
     }
 
-    private fun planMoreDialog() {
-        val items = arrayOf(
-            if (planLoop) "⟲  Pulang-pergi: ON (ketuk untuk ganti ke searah)" else "→  Searah: ketuk untuk ganti ke pulang-pergi",
-            "☷  Daftar titik",
-            "⌕  Cari lokasi",
-            "↗  Buka di Google Maps"
-        )
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Lainnya")
-            .setItems(items) { _, i ->
-                when (i) {
-                    0 -> {
-                        planLoop = !planLoop
-                        if (pageReady) mapView.evaluateJavascript("setLoop($planLoop)", null)
-                        Toast.makeText(this, if (planLoop) "Pulang-pergi" else "Searah", Toast.LENGTH_SHORT).show()
-                    }
-                    1 -> waypointListDialog()
-                    2 -> searchDialog()
-                    3 -> {
-                        if (planWps.size < 2) Toast.makeText(this, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
-                        else openDirections(planWps, planProfile())
-                    }
-                }
+    // ---------- Data ----------
+    private fun rawRecords(): MutableList<String> = store.all()
+
+    private fun parse(line: String): Rec? {
+        val f = line.split("|")
+        return if (f.size >= 6) Rec(f) else null
+    }
+
+    /** Jumlah hari berturut-turut ada aktivitas untuk mode ini, dihitung mundur dari hari ini (atau kemarin). */
+    private fun streakDays(m: String): Int {
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val days = HashSet<String>()
+        for (line in rawRecords()) {
+            val r = parse(line) ?: continue
+            if (r.mode == m && r.date.length >= 10) days.add(r.date.substring(0, 10))
+        }
+        val cal = Calendar.getInstance()
+        if (!days.contains(fmt.format(cal.time))) cal.add(Calendar.DAY_OF_YEAR, -1)
+        var n = 0
+        while (days.contains(fmt.format(cal.time))) { n++; cal.add(Calendar.DAY_OF_YEAR, -1) }
+        return n
+    }
+
+    private fun weekData(m: String): Pair<FloatArray, List<Rec>> {
+        val out = FloatArray(7)
+        val week = mutableListOf<Rec>()
+        val cal = Calendar.getInstance()
+        cal.firstDayOfWeek = Calendar.MONDAY
+        cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+        val c2 = Calendar.getInstance()
+        for (line in rawRecords()) {
+            val r = parse(line) ?: continue
+            if (r.mode != m) continue
+            val d = (try { fmt.parse(r.date) } catch (e: Exception) { null }) ?: continue
+            if (d.time < start) continue
+            c2.time = d
+            out[(c2.get(Calendar.DAY_OF_WEEK) + 5) % 7] += if (m == "Jalan") r.steps.toFloat() else r.km
+            week.add(r)
+        }
+        return Pair(out, week)
+    }
+
+    /** Angka pendamping di kartu perjalanan, sesuai fungsi tiap aktivitas. */
+    private fun secondary(rec: Rec): String = when (rec.mode) {
+        "Lari" -> Fmt.pace(rec.paceSec) + " /km"
+        "Jalan" -> Fmt.int(rec.steps) + " langkah"
+        else -> Fmt.dec(rec.avgF, 1) + " km/jam"
+    }
+
+    private fun tripCard(rec: Rec, detailed: Boolean, onClick: (() -> Unit)? = null, onLong: (() -> Unit)? = null): LinearLayout {
+        val a = acc(rec.mode)
+        val c = card(t.surface, 10, 16).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        c.addView(RouteView(this, t, true).apply { points = rec.route; accent = a }, LinearLayout.LayoutParams(dp(64), dp(48)))
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mid.addView(tv("${icon(rec.mode)}  ${rec.mode}", 13f, t.text, true))
+        mid.add(tv(rec.date, 11f, t.muted), 2)
+        if (detailed) mid.add(tv("${formatTime(rec.elapsed)} • ${secondary(rec)}", 11f, t.muted), 2)
+        c.addView(mid, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
+        right.addView(tv(Fmt.dec(rec.km, 2) + " km", 16f, a, true))
+        if (detailed) {
+            if (rec.target > 0f) {
+                right.add(tv(if (rec.reached) "✓ Target tercapai" else "Target belum", 11f,
+                    if (rec.reached) t.good else t.muted), 2)
             }
-            .setNegativeButton("Tutup", null)
+        } else {
+            right.add(tv(secondary(rec), 11f, t.muted), 2)
+        }
+        c.addView(right)
+        if (onClick != null) c.setOnClickListener { onClick() }
+        if (onLong != null) c.setOnLongClickListener { onLong(); true }
+        return c
+    }
+
+    // ---------- Screens ----------
+    private fun startLabel(m: String) = when (m) { "Sepeda" -> "BERSEPEDA"; "Motor" -> "BERKENDARA"; "Lari" -> "LARI"; else -> "JALAN" }
+
+    private fun targetSub(m: String) = when (m) {
+        "Sepeda", "Motor" -> "Jarak per perjalanan"
+        "Lari" -> "Jarak per lari"
+        else -> "Langkah per hari"
+    }
+
+    /** Beranda: tiga halaman (Sepeda, Lari, Jalan) yang digeser ke samping. */
+    /** Beranda, Utama, Rute, dan Grafik kini satu layar yang digeser, baik sedang merekam maupun tidak. */
+    private fun showHome() {
+        mulaiScreen = false
+        showTracking()
+    }
+
+    /** Menu Mulai (tengah): Utama, Rute, Grafik yang bisa digeser, plus tombol mulai/selesai. */
+    private fun showMulai() {
+        mulaiScreen = true
+        showTracking()
+    }
+
+    /** Isi satu halaman beranda untuk satu aktivitas. */
+    private fun homePageView(m: String): ScrollView {
+        val a = acc(m)
+        val r = column()
+        val (week, recs) = weekData(m)
+
+        val todayStr0 = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val todayRecs = recs.filter { it.date.startsWith(todayStr0) }
+        val tgt = Themes.target(this, m).toFloat().coerceAtLeast(1f)
+        val todayKm = todayRecs.sumOf { it.km.toDouble() }.toFloat()
+        val todaySt = todayRecs.sumOf { it.steps }
+        val todayMs = todayRecs.sumOf { it.elapsed }
+        val hc = card(t.surface, 14, 14)
+        val hrow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val ring0 = RingView(this, t, a).apply {
+            label = "HARI INI"
+            if (m == "Jalan") { value = Fmt.int(todaySt); sub = "langkah"; fraction = todaySt / tgt }
+            else { value = Fmt.dec(todayKm, 1); sub = "km"; fraction = todayKm / tgt }
+        }
+        hrow.addView(ring0, LinearLayout.LayoutParams(dp(112), dp(112)))
+        val facts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun fact(k: String, v: String) {
+            facts.addView(tv(k, 11f, t.muted))
+            facts.addView(mono(tv(v, 17f, t.text, true)), LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(6) })
+        }
+        fact("Target", Themes.targetLabel(m, Themes.target(this, m)))
+        fact("Durasi hari ini", Fmt.hm(todayMs))
+        fact("Aktivitas hari ini", todayRecs.size.toString() + "x")
+        hrow.addView(facts, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(18) })
+        hc.addView(hrow)
+        r.add(hc, 6)
+
+        val wc = card(t.surface, 14, 18)
+        val top = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        left.addView(tv("Minggu ini", 11f, t.muted))
+        val total = week.sum()
+        val totalText = if (m == "Jalan") Fmt.int(total.roundToInt()) + " langkah" else Fmt.dec(total, 1) + " km"
+        left.addView(mono(tv(totalText, 24f, a, true)))
+        top.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
+        val countText = when (m) {
+            "Sepeda", "Motor" -> "${recs.size} perjalanan"
+            "Lari" -> "${recs.size} kali lari"
+            else -> "${week.count { it > 0f }} hari berjalan"
+        }
+        top.addView(tv(countText, 11f, t.muted).apply { gravity = Gravity.END })
+        wc.addView(top)
+
+        val today = (Calendar.getInstance().get(Calendar.DAY_OF_WEEK) + 5) % 7
+        val dayNames = listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min")
+        val wk = WeekChartView(this, t).apply {
+            values = week.toList()
+            todayIndex = today
+            target = tgt
+            steps = m == "Jalan"
+            names = dayNames
+        }
+        wc.add(wk, 10, 0f, dp(190))
+
+        // Ringkasan pencapaian dari riwayat nyata
+        fun fv(v: Float) = if (m == "Jalan") Fmt.int(v.roundToInt()) else Fmt.dec(v, 1) + " km"
+        val hit = (0..today).count { week[it] >= tgt }
+        val active = (0..today).count { week[it] > 0f }
+        var bestI = -1
+        for (i in 0..today) if (week[i] > 0f && (bestI < 0 || week[i] > week[bestI])) bestI = i
+        val avgActive = if (active > 0) week.sum() / active else 0f
+        val sumRow = LinearLayout(this)
+        fun mini(k: String, v: String, col: Int, first: Boolean) {
+            val box1 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            box1.addView(tv(k, 10.5f, t.muted))
+            box1.addView(mono(tv(v, 14f, col, true)), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+            sumRow.addView(box1, LinearLayout.LayoutParams(0, -2, 1f).apply { if (!first) leftMargin = dp(8) })
+        }
+        mini("Target tercapai", "$hit/${today + 1} hari", if (hit > 0) t.good else t.text, true)
+        mini("Hari terbaik", if (bestI >= 0) dayNames[bestI] + " · " + fv(week[bestI]) else "-", a, false)
+        mini("Rata-rata/hari aktif", if (active > 0) fv(avgActive) else "-", t.text, false)
+        wc.add(sumRow, 12)
+        val streak = streakDays(m)
+        val msg = when {
+            hit > 0 && streak >= 2 -> "★ $hit hari mencapai target minggu ini · beruntun $streak hari"
+            hit > 0 -> "★ $hit hari mencapai target minggu ini"
+            streak >= 2 -> "Beruntun $streak hari, terus pertahankan!"
+            active > 0 -> "Belum ada hari yang mencapai target minggu ini"
+            else -> "Belum ada aktivitas minggu ini, ayo mulai!"
+        }
+        wc.add(tv(msg, 12f, if (hit > 0) t.good else t.muted, hit > 0), 10)
+        r.add(wc, 10)
+
+        val totalKm = recs.sumOf { it.km.toDouble() }.toFloat()
+        val totalMs = recs.sumOf { it.elapsed }
+        val hours = totalMs / 3600000f
+        val metrics = when (m) {
+            "Sepeda", "Motor" -> Pair(
+                statCard("Kecepatan rata-rata",
+                    if (hours > 0f) Fmt.dec(totalKm / hours, 1) + " km/jam" else "0 km/jam"),
+                statCard("Tanjakan minggu ini",
+                    recs.sumOf { (it.climb.toFloatOrNull() ?: 0f).toDouble() }.roundToInt().toString() + " m")
+            )
+            "Lari" -> Pair(
+                statCard("Pace rata-rata",
+                    if (totalKm > 0.05f) Fmt.pace(((totalMs / 1000f) / totalKm).roundToInt()) + " /km" else "--:-- /km"),
+                statCard("Terjauh minggu ini", Fmt.dec(recs.maxOfOrNull { it.km } ?: 0f, 1) + " km")
+            )
+            else -> {
+                val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                val todaySteps = recs.filter { it.date.startsWith(todayStr) }.sumOf { it.steps }
+                Pair(
+                    statCard("Langkah hari ini", Fmt.int(todaySteps), a),
+                    statCard("Durasi minggu ini", Fmt.hm(totalMs))
+                )
+            }
+        }
+        statRow(r, metrics.first, metrics.second, 10)
+
+        if (running) {
+            val live = card(t.surface, 14, 18)
+            live.addView(tv("● AKTIVITAS SEDANG BERJALAN", 11f, a, true))
+            live.add(tv(if (paused) "Dijeda • tekan LANJUT di bawah untuk meneruskan"
+                else if (TrackerState.autoPaused) "Jeda otomatis • waktu berjalan lagi saat kamu bergerak"
+                else "Merekam • buka menu Mulai untuk Utama, Rute, atau Grafik", 13f, t.text), 4)
+            r.add(live, 10)
+            r.add(btn("→   LIHAT AKTIVITAS", a, 30) { goTrackPage(0) }, 10, 0f, dp(54))
+        } else {
+            r.add(stepper("◎ Target hari ini", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
+                { Themes.stepTarget(this, m, -1); showHome() },
+                { Themes.stepTarget(this, m, 1); showHome() }, a), 10)
+        }
+
+        val last = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }
+            .filter { it.second.mode == m }.take(2)
+        if (last.isNotEmpty()) {
+            r.add(tv("Terakhir · $m", 11f, t.muted, true), 16)
+            for ((idx, rec) in last) r.add(tripCard(rec, false, { showDetail(idx, rec) }), 8)
+        }
+        return ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(t.bg)
+            addView(r)
+        }
+    }
+
+    private fun hasFine() =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    /** Jelaskan dulu untuk apa izinnya (syarat Google Play), baru tampilkan dialog izin sistem. */
+    private fun askPermissions() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.perm_title))
+            .setMessage(getString(R.string.perm_msg))
+            .setCancelable(false)
+            .setPositiveButton(getString(R.string.perm_continue)) { _, _ ->
+                val list = mutableListOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+                if (Build.VERSION.SDK_INT >= 33) list.add(Manifest.permission.POST_NOTIFICATIONS)
+                requestPermissions(list.toTypedArray(), 100)
+            }
+            .setNegativeButton("Batal") { _, _ -> pendingResume = false }
             .show()
     }
 
-    /** Link arah Google Maps (maks. 10 titik, dipilih merata). */
-    private fun directionsUrl(w: List<DoubleArray>, prof: String): String {
-        val pts = if (w.size <= 10) w else List(10) { i -> w[(i * (w.size - 1)) / 9] }
-        val sb = StringBuilder("https://www.google.com/maps/dir/")
-        for (p in pts) sb.append(String.format(Locale.US, "%.6f,%.6f/", p[0], p[1]))
-        sb.append("?travelmode=").append(if (prof == "bike") "bicycling" else "walking")
-        return sb.toString()
+    /** GPS di pengaturan HP menyala atau tidak. */
+    private fun gpsOn(): Boolean = try {
+        (getSystemService(LOCATION_SERVICE) as LocationManager).isProviderEnabled(LocationManager.GPS_PROVIDER)
+    } catch (e: Exception) {
+        true
     }
 
-    private fun openDirections(w: List<DoubleArray>, prof: String) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(directionsUrl(w, prof))))
-        } catch (e: Exception) {
-            Toast.makeText(this, "Tidak bisa membuka peta.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun savePlanDialog() {
-        if (planWps.size < 2) {
-            Toast.makeText(this, "Tambahkan minimal 2 titik.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val et = android.widget.EditText(this).apply {
-            setText("Rute " + (loadPlans().size + 1))
-            setSingleLine()
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Simpan rencana rute")
-            .setView(et)
-            .setPositiveButton("Simpan") { _, _ ->
-                val name = et.text.toString().replace("|", " ").replace("\n", " ").trim().ifEmpty { "Rute" }
-                val wps = planWps.joinToString(";") { String.format(Locale.US, "%.6f,%.6f", it[0], it[1]) }
-                val list = loadPlans()
-                val newId = System.currentTimeMillis().toString()
-                list.add(0, listOf(
-                    newId, name, if (planRoad) "1" else "0",
-                    planProfile(), planDist.toInt().toString(), wps, if (planLoop) "1" else "0", planGeo
-                ))
-                savePlans(list.take(20))
-                SavedRoutes.setMode(this, newId, mode)
-                Toast.makeText(this, "Rencana \"$name\" disimpan", Toast.LENGTH_SHORT).show()
+    private fun showGpsOff() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.gps_off_title))
+            .setMessage(getString(R.string.gps_off_msg))
+            .setPositiveButton(getString(R.string.open_settings)) { _, _ ->
+                try {
+                    startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Buka Pengaturan > Lokasi lalu nyalakan.", Toast.LENGTH_LONG).show()
+                }
             }
             .setNegativeButton("Batal", null)
             .show()
     }
 
-    // ---------- Survei Lokasi ----------
-    private var lastLoc: Location? = null
-
-    private fun mapFree() = viewRoute == null && !TrackerState.running
-
-    private fun prefsSurvey() = getSharedPreferences("survey", MODE_PRIVATE)
-
-    /** Titik survei tersimpan: waktu|lat|lon|alt|nama (terbaru di atas). */
-    private fun loadPoints(): MutableList<List<String>> =
-        (prefsSurvey().getString("points", "") ?: "").lines().filter { it.isNotBlank() }
-            .map { it.split("|") }.filter { it.size >= 5 }.toMutableList()
-
-    private fun savePoints(list: List<List<String>>) {
-        prefsSurvey().edit().putString("points", list.joinToString("\n") { it.joinToString("|") }).apply()
-    }
-
-    private fun jsStr(s: String) = "'" + s.replace("\\", "").replace("'", "") + "'"
-
-    private fun markJs(p: List<String>) = "addMark(${p[1]},${p[2]},${jsStr(p[4])})"
-
-    private fun pill(label: String, fill: Int, action: () -> Unit) = TextView(this).apply {
-        text = label
-        textSize = 14f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setTextColor(onColor(fill))
-        background = round(fill, 22)
-        setOnClickListener { action() }
-    }
-
-    /** Tandai titik survei di lokasi saya, atau kelola titik tersimpan. */
-    private fun marksDialog() {
-        val pts = loadPoints()
-        val items = ArrayList<String>()
-        items.add("⚑  Tandai lokasi saya sekarang")
-        pts.forEach { items.add(it[4] + " · " + it[3] + " m") }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Titik tersimpan (" + pts.size + ")")
-            .setItems(items.toTypedArray()) { _, i ->
-                if (i == 0) {
-                    val l = lastLoc
-                    if (l == null) {
-                        Toast.makeText(this, "Belum ada sinyal GPS.", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val list = loadPoints()
-                        val name = "Titik " + (list.size + 1)
-                        val p = listOf(
-                            System.currentTimeMillis().toString(),
-                            String.format(Locale.US, "%.6f", l.latitude),
-                            String.format(Locale.US, "%.6f", l.longitude),
-                            if (l.hasAltitude()) l.altitude.roundToInt().toString() else "0",
-                            name
-                        )
-                        list.add(0, p)
-                        savePoints(list.take(30))
-                        if (pageReady) mapView.evaluateJavascript(markJs(p), null)
-                        Toast.makeText(this, name + " disimpan", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    val p = pts[i - 1]
-                    android.app.AlertDialog.Builder(this)
-                        .setTitle(p[4])
-                        .setItems(arrayOf("Lihat di peta", "Bagikan lokasi", "Hapus titik")) { _, k ->
-                            when (k) {
-                                0 -> if (pageReady) mapView.evaluateJavascript("focusMark(${p[1]},${p[2]})", null)
-                                1 -> {
-                                    val txt = p[4] + ": https://maps.google.com/?q=" + p[1] + "," + p[2]
-                                    try {
-                                        startActivity(Intent.createChooser(
-                                            Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, txt),
-                                            "Bagikan lokasi"))
-                                    } catch (e: Exception) {
-                                        Toast.makeText(this, "Tidak ada aplikasi untuk berbagi.", Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                                else -> {
-                                    val all = loadPoints()
-                                    all.removeAll { it[0] == p[0] }
-                                    savePoints(all)
-                                    if (pageReady) {
-                                        mapView.evaluateJavascript("clearMarks()", null)
-                                        for (q in all) mapView.evaluateJavascript(markJs(q), null)
-                                    }
-                                    Toast.makeText(this, "Titik dihapus", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                        .setNegativeButton("Tutup", null)
-                        .show()
+    private fun showLocationDenied() {
+        AlertDialog.Builder(this)
+            .setTitle("Izin lokasi presisi diperlukan")
+            .setMessage("Izinkan akses lokasi dengan pilihan \"Presisi/Tepat\" agar jarak dan kecepatan dihitung dari GPS.")
+            .setPositiveButton("Buka Pengaturan") { _, _ ->
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Buka Pengaturan > Aplikasi > izin lokasi.", Toast.LENGTH_LONG).show()
                 }
             }
-            .setNegativeButton("Tutup", null)
+            .setNegativeButton("Batal", null)
             .show()
     }
 
-    private fun mapHtml(): String = MapHtml.build(accentHex)
+    private fun sendService(action: String) {
+        val i = Intent(this, TrackingService::class.java).setAction(action)
+        try {
+            val foreground = action == TrackingService.ACTION_START || action == TrackingService.ACTION_RESUME
+            if (foreground && Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Pelacakan latar belakang gagal dimulai.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startTracking(m: String = mode) {
+        if (running) return
+        mode = m
+        trackPage = 1
+        mulaiScreen = true
+        if (!hasFine()) {
+            pendingResume = false
+            askPermissions()
+            return
+        }
+        if (!gpsOn()) {
+            showGpsOff()
+            return
+        }
+        stopIdleGps()
+        TrackerState.autoPause = getSharedPreferences("bike_history", MODE_PRIVATE).getBoolean("auto_pause", true)
+        TrackerState.start(Themes.target(this, mode))
+        TrackerState.persist(this)
+        sendService(TrackingService.ACTION_START)
+        showTracking()
+        handler.removeCallbacks(timer)
+        handler.post(timer)
+        maybeBatteryHint()
+    }
+
+    /** Sekali saja: ingatkan mengecualikan aplikasi dari penghematan baterai supaya rekaman tidak dimatikan sistem. */
+    private fun maybeBatteryHint() {
+        if (batteryIgnored() || prefs.getBoolean("battery_hint", false)) return
+        prefs.edit().putBoolean("battery_hint", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("Agar rekaman tidak terputus")
+            .setMessage("Beberapa HP (Xiaomi, Oppo, Vivo, Samsung) menghentikan aplikasi di latar belakang. " +
+                "Kecualikan Delaas dari penghematan baterai supaya GPS tetap merekam saat layar mati.")
+            .setPositiveButton("Atur sekarang") { _, _ -> openBatterySettings() }
+            .setNegativeButton("Nanti", null)
+            .show()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CAMERA_FLASH) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startFlashBlink()
+            else Toast.makeText(this, "Izin kamera diperlukan untuk menggunakan flash.", Toast.LENGTH_LONG).show()
+            if (::t.isInitialized) showSettings()
+            return
+        }
+        if (requestCode == 100) {
+            if (hasFine()) {
+                if (pendingResume) {
+                    pendingResume = false
+                    resumeTracking()
+                } else {
+                    startTracking()
+                }
+            } else {
+                pendingResume = false
+                showLocationDenied()
+            }
+        }
+    }
+
+    private fun resetTrackViews() {
+        gauge = null; ring = null; targetBar = null; targetValue = null; targetPct = null
+        targetInfo = null; gpsText = null; distanceText = null; timeText = null; avgText = null
+        maxText = null; kcalText = null; climbText = null; speedText = null; cadenceText = null
+        paceNowText = null; paceAvgText = null; paceBestText = null; ringInfo = null; splitsBox = null
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
+        chartDistText = null; chartTimeText = null; chartKcalText = null; routeDistText = null; routeTimeText = null
+        routeGauge = null; routeAvgText = null; routeMaxText = null; routeKcalText = null
+        routeClimbText = null; routeTarget = null; routePct = null; routeBar = null; routeBanner = null
+        chart = null; chartAvgText = null; chartMaxText = null
+    }
+
+    // ---------- GPS saat belum merekam (untuk status dan posisi di peta) ----------
+    private var idleListening = false
+
+    private val idleListener = object : LocationListener {
+        override fun onLocationChanged(l: Location) {
+            val good = l.accuracy <= 40f
+            TrackerState.gpsStatus = if (l.accuracy <= 30f) TrackerState.gpsLabel(l.accuracy) else "Mencari GPS…"
+            gpsText?.text = gpsStatus
+            if (good) TrackerState.lastFix = l
+            if (good) {
+                trackMap?.position(l.latitude, l.longitude)
+                chartMap?.position(l.latitude, l.longitude)
+                groupMap?.position(l.latitude, l.longitude)
+            }
+        }
+
+        @Suppress("DEPRECATION")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+
+        override fun onProviderEnabled(provider: String) {}
+
+        override fun onProviderDisabled(provider: String) {
+            TrackerState.gpsStatus = "GPS mati"
+            gpsText?.text = gpsStatus
+        }
+    }
+
+    private fun startIdleGps() {
+        if (running || idleListening || !hasFine()) return
+        try {
+            val lm = getSystemService(LOCATION_SERVICE) as LocationManager
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, idleListener)
+            idleListening = true
+        } catch (e: Exception) {
+            idleListening = false
+        }
+    }
+
+    private fun stopIdleGps() {
+        if (!idleListening) return
+        try {
+            (getSystemService(LOCATION_SERVICE) as LocationManager).removeUpdates(idleListener)
+        } catch (e: Exception) {
+        }
+        idleListening = false
+    }
+
+    private fun miniStat(label: String, initial: String, color: Int = t.text): Pair<View, TextView> {
+        val c = card(t.surface, 8, 12)
+        c.addView(tv(label, 10f, t.muted))
+        val v = tv(initial, 14f, color, true)
+        c.add(v, 1)
+        return Pair(c, v)
+    }
+
+    private fun trackScroll(col: LinearLayout) = ScrollView(this).apply {
+        isFillViewport = true
+        setBackgroundColor(t.bg)
+        addView(col)
+    }
+
+    /** Halaman "Rute": peta sungguhan (Peta/Satelit) dengan garis rute langsung + tombol ke peta lengkap. */
+    private fun buildRoutePage(a: Int): LinearLayout {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(4), dp(16), dp(8))
+        }
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val g = GaugeView(this, t).apply {
+            scaleMax = scaleFor(mode)
+            accent = a
+            scale = 1f
+            compact = true
+            digital = digitalMode
+            pure = digitalMode
+        }
+        routeGauge = g
+        top.addView(g, LinearLayout.LayoutParams(dp(130), -2))
+
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val head = LinearLayout(this)
+        head.addView(tv("Target " + mode.lowercase(), 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 11f, t.good, true)
+        routePct = pct
+        head.addView(pct)
+        right.addView(head)
+        val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        val tval = mono(tv("0,00", 20f, a, true))
+        routeTarget = tval
+        vrow.addView(tval)
+        vrow.addView(tv("  / " + Themes.targetLabel(mode, TrackerState.target) +
+            (if (mode == "Jalan") " langkah" else ""), 11f, t.muted))
+        right.add(vrow, 2)
+        val bar = SegBar(this, t).apply { color = a }
+        routeBar = bar
+        right.add(bar, 6, 0f, dp(8))
+        val maxC = miniStat("Maks. km/jam", "0,0", a)
+        val avgC = miniStat("Rata-rata", "0,0", t.good)
+        routeMaxText = maxC.second
+        routeAvgText = avgC.second
+        val r2 = LinearLayout(this)
+        r2.addView(maxC.first, LinearLayout.LayoutParams(0, -2, 1f))
+        r2.addView(avgC.first, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
+        right.add(r2, 8)
+        top.addView(right, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        col.addView(top)
+
+        val disC = miniStat("Jarak", "0,00 km")
+        val timC = miniStat("Durasi", "00:00:00")
+        val clmC = miniStat("Tanjakan", "0 m")
+        val kalC = miniStat("Kalori", "0 kkal")
+        routeDistText = disC.second; routeTimeText = timC.second
+        routeClimbText = clmC.second; routeKcalText = kalC.second
+        val row = LinearLayout(this)
+        listOf(disC, timC, clmC, kalC).forEachIndexed { i, c ->
+            row.addView(c.first, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(5) })
+        }
+        col.add(row, 6)
+
+        val banner = tv("", 12f, t.good, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = box(t.surface, 12)
+            visibility = View.GONE
+        }
+        routeBanner = banner
+        col.add(banner, 6)
+
+        val mp = MapPanel(this, t, a)
+        mp.minimumHeight = dp(180)
+        trackMap = mp
+        col.addView(mp, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
+        return col
+    }
+
+    /** Halaman "Grafik": kecepatan (atau pace untuk Lari) sepanjang aktivitas. */
+    private fun buildChartPage(m: String, a: Int): LinearLayout {
+        val col = column()
+
+        // Peta mini dengan pin Start dan Stop
+        val mp = MapPanel(this, t, a, true)
+        chartMap = mp
+        col.addView(mp, LinearLayout.LayoutParams(-1, dp(170)).apply { topMargin = dp(4) })
+
+        // Kartu ringkasan aktivitas
+        val sc = card(t.surface, 14, 18)
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(tv(icon(m), 22f, a).apply { gravity = Gravity.CENTER },
+            LinearLayout.LayoutParams(dp(40), dp(40)).apply { rightMargin = dp(10) })
+        val ht = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ht.addView(tv(m, 16f, t.text, true))
+        ht.addView(tv(SimpleDateFormat("d MMM yyyy HH:mm", Locale.forLanguageTag("id-ID")).format(Date()), 12f, t.muted))
+        head.addView(ht)
+        sc.addView(head)
+
+        val avgLabel = if (m == "Lari") "Pace rata-rata" else "Rata-rata"
+        val maxLabel = when (m) { "Lari" -> "Split terbaik"; "Jalan" -> "Irama"; else -> "Maksimum" }
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        val avgC = statCard(avgLabel, "--", t.text)
+        val maxC = statCard(maxLabel, "--", t.text)
+        val kalC = statCard("Kalori", "0 kkal", Themes.modeAccent("Lari"))
+        chartDistText = disC.second
+        chartTimeText = timC.second
+        chartAvgText = avgC.second
+        chartMaxText = maxC.second
+        chartKcalText = kalC.second
+        statRow(sc, disC, timC, 12)
+        statRow(sc, avgC, maxC, 8)
+        statRow(sc, kalC, Pair<View, TextView>(View(this), TextView(this)), 8)
+        col.add(sc, 8)
+
+        // Grafik kecepatan
+        val cc = card(t.surface, 14, 18)
+        cc.addView(tv(if (m == "Lari") "Grafik Pace (menit/km)" else "Grafik Kecepatan", 14f, t.text, true))
+        val ch = ChartView(this, t, a)
+        if (m == "Lari") {
+            ch.yTitle = "min/km"
+            ch.label = { v -> if (v < 1.5f) "" else Fmt.pace((3600f / v).roundToInt()) }
+        }
+        chart = ch
+        cc.add(ch, 6, 0f, dp(220))
+        col.add(cc, 8)
+        return col
+    }
+
+    /**
+     * Layar tracking, tiga halaman yang digeser ke samping: Utama (berbeda tiap aktivitas),
+     * Rute, dan Grafik. Tombol SELESAI/JEDA tetap di bawah.
+     */
+    private fun showTracking() {
+        resetTrackViews()
+        stopIdleGps()
+        if (!running) {
+            TrackerState.clearDisplay()
+            TrackerState.target = Themes.target(this, mode)
+            TrackerState.gpsStatus = if (hasFine()) "Menunggu lokasi…" else "GPS aktif saat mulai"
+        }
+        Themes.keepAwake(this, running)
+        currentTab = -1
+        inDetail = false
+        val m = mode
+        val a = acc(m)
+        val w = resources.displayMetrics.widthPixels
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), 0)
+            setBackgroundColor(t.bg)
+        }
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        if (running) {
+            top.addView(tv(icon(m) + "  " + m, 14f, a, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(16), 0, dp(16), 0)
+                background = box((a and 0x00FFFFFF) or 0x26000000, 22)
+            }, LinearLayout.LayoutParams(-2, dp(44)))
+        } else {
+            val seg = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(3), dp(3), dp(3), dp(3))
+                background = box(t.surface, 22, true)
+            }
+            for (mm in modes) {
+                val sel = mm == m
+                val ac = acc(mm)
+                seg.addView(tv(if (sel) icon(mm) + " " + mm else icon(mm), 13f, if (sel) onColor(ac) else t.muted, true).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(dp(if (sel) 12 else 8), 0, dp(if (sel) 12 else 8), 0)
+                    if (sel) background = box(ac, 19)
+                    setOnClickListener { if (mode != mm) { mode = mm; showTracking() } }
+                }, LinearLayout.LayoutParams(-2, dp(38)))
+            }
+            top.addView(seg, LinearLayout.LayoutParams(-2, dp(44)))
+        }
+        if (mulaiScreen) {
+            val gps = tv(gpsStatus, 11f, t.good, true).apply { gravity = Gravity.CENTER }
+            gpsText = gps
+            top.addView(gps, LinearLayout.LayoutParams(0, -2, 1f))
+            top.addView(tv("⌖", 20f, t.text).apply {
+                contentDescription = "Buka peta"
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.surface) }
+                setOnClickListener { openMap() }
+            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            header.addView(top)
+        } else {
+            // Beranda: sapaan di paling atas, lalu pilihan kegiatan.
+            header.addView(tv("Aktivitasmu,", 28f, t.text, true))
+            header.addView(tv("petualanganmu.", 28f, a, true))
+            header.add(tv("Pilih kegiatan, tentukan target, lalu mulai perjalananmu.", 13f, t.muted), 6)
+            header.add(btn(if (running) "Lihat aktivitas  →" else "Mulai aktivitas  →", a, 24) {
+                if (running) goTrackPage(0) else showMulai()
+            }, 12, 0f, dp(48))
+            header.add(top, 12)
+        }
+
+        val tabViews = ArrayList<TextView>()
+        lateinit var pager: PagerScroll
+        fun styleTab(v: TextView, selected: Boolean) {
+            v.setTextColor(if (selected) a else t.muted)
+            v.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            v.paint.isUnderlineText = selected
+        }
+        val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        listOf("Utama", "Rute", "Grafik").forEachIndexed { i, name ->
+            val v = tv(name, 13f, t.muted).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(9), dp(10), dp(9), dp(6))
+                setOnClickListener { pager.goTo(i, true) }
+            }
+            styleTab(v, i == trackPage)
+            tabViews.add(v)
+            tabRow.addView(v)
+        }
+        if (mulaiScreen) header.add(tabRow, 4)
+
+        if (trackPage > 2) trackPage = 0
+        val content: View
+        if (mulaiScreen) {
+            pager = PagerScroll(this, w) { p ->
+                trackPage = p
+                tabViews.forEachIndexed { i, v -> styleTab(v, i == p) }
+            }
+            val main = column()
+            when (m) {
+                "Lari" -> buildRunBody(main, a)
+                "Jalan" -> buildWalkBody(main, a)
+                else -> buildBikeBody(main, a)
+            }
+            pager.pages = 3
+            goTrackPage = { p -> pager.goTo(p, true) }
+            val strip = LinearLayout(this)
+            strip.addView(trackScroll(main), LinearLayout.LayoutParams(w, -1))
+            strip.addView(trackScroll(buildRoutePage(a)), LinearLayout.LayoutParams(w, -1))
+            strip.addView(trackScroll(buildChartPage(m, a)), LinearLayout.LayoutParams(w, -1))
+            pager.addView(strip)
+            content = pager
+        } else {
+            goTrackPage = { p -> mulaiScreen = true; trackPage = p; showTracking() }
+            content = homePageView(m)
+        }
+
+        val row = LinearLayout(this).apply {
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setBackgroundColor(t.bg)
+        }
+        if (running) {
+            row.addView(btn("SELESAI", t.bad, 23) { finishTracking() }, LinearLayout.LayoutParams(0, dp(46), 1f))
+            row.addView(btn(if (paused) "LANJUT" else "JEDA", a, 23) {
+                if (paused) resumeTracking() else pauseTracking()
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(10) })
+        } else {
+            row.addView(btn("▶   MULAI " + startLabel(m), a, 23) { startTracking(m) },
+                LinearLayout.LayoutParams(-1, dp(46)))
+        }
+
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(t.bg)
+            setOnApplyWindowInsetsListener { v, i ->
+                v.setPadding(0, i.systemWindowInsetTop, 0, i.systemWindowInsetBottom); i
+            }
+        }
+        outer.addView(header)
+        outer.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
+        // Beranda tidak perlu tombol Mulai (sudah ada tab Mulai). Tombol tetap tampil di layar Mulai
+        // dan saat sedang merekam (SELESAI / JEDA).
+        if (running || mulaiScreen) outer.addView(row)
+        outer.addView(navBar(if (mulaiScreen) 2 else 0))
+        setContentView(outer)
+        outer.requestApplyInsets()
+        if (mulaiScreen) pager.post { pager.goTo(trackPage, false) }
+        shownPaused = paused
+        refreshTracking()
+        if (!running) startIdleGps()
+        if (running) {
+            // Timer tetap berjalan walau dijeda, supaya layar ikut berubah saat dijeda/dilanjutkan dari notifikasi.
+            handler.removeCallbacks(timer)
+            handler.postDelayed(timer, 1000)
+        }
+    }
+
+    /** Pilihan tampilan speedometer: Analog atau Digital (pilihan diingat). */
+    private fun gaugeToggle(g: GaugeView, a: Int): LinearLayout {
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            background = box(t.surface, 20, true)
+        }
+        val chips = ArrayList<TextView>()
+        fun style() {
+            chips.forEachIndexed { i, v ->
+                val sel = (i == 1) == digitalMode
+                v.setTextColor(if (sel) onColor(a) else t.muted)
+                v.background = if (sel) box(a, 16) else null
+            }
+        }
+        listOf("Analog", "Digital").forEachIndexed { i, name ->
+            val v = tv(name, 12f, t.muted, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(16), 0, dp(16), 0)
+                setOnClickListener {
+                    digitalMode = i == 1
+                    prefs.edit().putBoolean("digital", digitalMode).apply()
+                    g.digital = digitalMode
+                    g.pure = digitalMode
+                    g.invalidate()
+                    style()
+                }
+            }
+            chips.add(v)
+            row.addView(v, LinearLayout.LayoutParams(-2, dp(32)))
+        }
+        style()
+        return row
+    }
+
+    /** Sepeda dan Motor: speedometer besar (analog atau digital), target jarak, enam statistik. */
+    private fun buildBikeBody(r: LinearLayout, a: Int) {
+        val g = GaugeView(this, t).apply {
+            scaleMax = scaleFor(mode)
+            digital = digitalMode
+            pure = digitalMode
+            accent = a
+            setOnClickListener {
+                digitalMode = !digitalMode
+                prefs.edit().putBoolean("digital", digitalMode).apply()
+                digital = digitalMode
+                pure = digitalMode
+                invalidate()
+            }
+        }
+        gauge = g
+        r.addView(gaugeToggle(g, a), LinearLayout.LayoutParams(-2, dp(38)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = dp(4)
+        })
+        r.add(g, 6)
+
+        val tc = card(t.surface, 12, 16)
+        // Kartu target dibuat lebih pendek (tipis ke atas-bawah), lebarnya tetap penuh
+        tc.setPadding(dp(14), dp(5), dp(14), dp(5))
+        val head = LinearLayout(this)
+        head.addView(tv(if (mode == "Motor") "◎ Target berkendara" else "◎ Target bersepeda", 12f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 12f, t.good, true)
+        targetPct = pct
+        head.addView(pct)
+        tc.addView(head)
+        val vrow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        val value = mono(tv("0,00", 16f, a, true))
+        targetValue = value
+        vrow.addView(value)
+        vrow.addView(tv("  / ${TrackerState.target} km", 11f, t.muted))
+        tc.add(vrow, 0)
+        val bar = SegBar(this, t).apply { color = a }
+        targetBar = bar
+        tc.add(bar, 2, 0f, dp(6))
+        val info = tv("", 10f, t.muted)
+        targetInfo = info
+        tc.add(info, 1)
+        r.add(tc, 10)
+
+        val maxC = statCard("Kecepatan maks.", "0,0 km/jam", a)
+        val avgC = statCard("Rata-rata", "0,0 km/jam", t.good)
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        val clmC = statCard("Tanjakan", "0 m")
+        val kalC = if (mode == "Motor") statCard("Kecepatan", "0,0 km/jam") else statCard("Kalori", "0 kkal")
+        maxText = maxC.second; avgText = avgC.second; distanceText = disC.second
+        timeText = timC.second; climbText = clmC.second
+        if (mode == "Motor") speedText = kalC.second else kcalText = kalC.second
+        statRow(r, maxC, avgC, 10)
+        statRow(r, disC, timC)
+        statRow(r, clmC, kalC)
+    }
+
+    /** Lari: pace sebagai angka utama, split per km, target jarak. */
+    private fun buildRunBody(r: LinearLayout, a: Int) {
+        val hero = card(t.surface, 16, 22).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        hero.addView(tv("PACE SAAT INI", 11f, t.muted, true).apply {
+            gravity = Gravity.CENTER
+            letterSpacing = 0.16f
+        })
+        val pn = mono(tv("--:--", 64f, a, true)).apply { gravity = Gravity.CENTER }
+        paceNowText = pn
+        val prow = LinearLayout(this).apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM }
+        prow.addView(pn)
+        prow.addView(tv(" /km", 16f, t.muted, true).apply { setPadding(0, 0, 0, dp(10)) })
+        hero.addView(prow)
+        val sub = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        val pa = tv("", 13f, t.muted)
+        val pb = tv("", 13f, t.muted)
+        paceAvgText = pa
+        paceBestText = pb
+        sub.addView(pa)
+        sub.addView(pb, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(18) })
+        hero.add(sub, 4)
+        r.add(hero, 10)
+
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        disC.second.textSize = 26f
+        timC.second.textSize = 26f
+        distanceText = disC.second
+        timeText = timC.second
+        statRow(r, disC, timC, 8)
+
+        val sc = card(t.surface, 12, 16)
+        val sh = LinearLayout(this)
+        sh.addView(tv("Split per km", 11f, t.muted), LinearLayout.LayoutParams(0, -2, 1f))
+        sh.addView(tv("pace /km", 11f, t.muted))
+        sc.addView(sh)
+        val sb = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        splitsBox = sb
+        sc.add(sb, 2)
+        r.add(sc, 8)
+
+        val tc = card(t.surface, 12, 16)
+        val head = LinearLayout(this)
+        val label = tv("", 12f, t.muted)
+        targetInfo = label
+        head.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+        val pct = tv("0%", 12f, t.good, true)
+        targetPct = pct
+        head.addView(pct)
+        tc.addView(head)
+        val bar = SegBar(this, t).apply { color = a }
+        targetBar = bar
+        tc.add(bar, 8, 0f, dp(10))
+        r.add(tc, 8)
+
+        val spC = statCard("Kecepatan", "0,0 km/jam")
+        val kalC = statCard("Kalori", "0 kkal")
+        speedText = spC.second
+        kcalText = kalC.second
+        statRow(r, spC, kalC, 8)
+    }
+
+    /** Jalan: cincin langkah menuju target harian (langkah diperkirakan dari jarak GPS). */
+    private fun buildWalkBody(r: LinearLayout, a: Int) {
+        val rc = card(t.surface, 16, 22).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        val rv = RingView(this, t, a)
+        ring = rv
+        rc.addView(rv, LinearLayout.LayoutParams(dp(230), dp(230)))
+        val ri = tv("", 13f, t.muted).apply { gravity = Gravity.CENTER }
+        ringInfo = ri
+        rc.add(ri, 8)
+        r.add(rc, 10)
+
+        val disC = statCard("Jarak", "0,00 km")
+        val timC = statCard("Durasi", "00:00:00")
+        val avgC = statCard("Rata-rata", "0,0 km/jam")
+        val cadC = statCard("Irama", "0 langkah/mnt")
+        val kalC = statCard("Kalori", "0 kkal")
+        val clmC = statCard("Tanjakan", "0 m")
+        distanceText = disC.second; timeText = timC.second; avgText = avgC.second
+        cadenceText = cadC.second; kcalText = kalC.second; climbText = clmC.second
+        statRow(r, disC, timC, 8)
+        statRow(r, avgC, cadC)
+        statRow(r, kalC, clmC)
+    }
+
+    private fun splitRow(
+        container: LinearLayout, label: String, frac: Float, barColor: Int,
+        right: String, highlight: Boolean, a: Int
+    ) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(tv(label, 12f, if (highlight) a else t.muted, highlight), LinearLayout.LayoutParams(dp(46), -2))
+        val bar = LinearLayout(this).apply { background = box(t.surface2, 6) }
+        val f = frac.coerceIn(0f, 1f)
+        bar.addView(View(this).apply { background = box(barColor, 6) }, LinearLayout.LayoutParams(0, -1, f))
+        bar.addView(View(this), LinearLayout.LayoutParams(0, -1, 1f - f))
+        row.addView(bar, LinearLayout.LayoutParams(0, dp(12), 1f))
+        row.addView(mono(tv(right, 14f, if (highlight) a else t.text, true)).apply {
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(dp(64), -2).apply { leftMargin = dp(10) })
+        container.add(row, 6)
+    }
+
+    /** Tiga km terakhir yang selesai + km yang sedang berjalan. Pace lebih cepat = batang lebih panjang. */
+    private fun fillSplits(container: LinearLayout, a: Int) {
+        container.removeAllViews()
+        val sp = TrackerState.splits
+        val fast = sp.minOrNull()
+        val slow = sp.maxOrNull()
+        for (i in maxOf(0, sp.size - 3) until sp.size) {
+            val s = sp[i]
+            val f = if (fast == null || slow == null || fast == slow) 0.9f
+            else 0.5f + 0.5f * (slow - s).toFloat() / (slow - fast).toFloat()
+            val best = sp.size > 1 && s == fast
+            splitRow(container, "Km ${i + 1}", f, if (best) a else dim(a), Fmt.pace(s), best, a)
+        }
+        val rem = (distanceMeters % 1000f) / 1000f
+        splitRow(container, "Km ${sp.size + 1}", rem, dim(a), Fmt.dec(rem, 2) + " km", false, a)
+    }
+
+    private fun currentElapsed(): Long = TrackerState.currentElapsed()
+
+    private fun formatTime(ms: Long): String {
+        val s = (ms / 1000L).coerceAtLeast(0L)
+        return String.format(Locale.US, "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+    }
+
+    private fun averageSpeed(): Float = TrackerState.averageSpeed()
+
+    private fun calories(): Int = TrackerState.calories(Themes.weight(this))
+
+    /** Teks kalori; naik motor tidak dihitung sebagai pembakaran kalori. */
+    private fun kcalStr(): String = if (mode == "Motor") "–" else "${calories()} kkal"
+
+    private fun recKcal(rec: Rec): String = if (rec.mode == "Motor") "–" else "${rec.kcal} kkal"
+
+    private fun refreshTracking() {
+        gpsText?.text = gpsStatus
+        if (distanceText == null) return
+        val km = distanceMeters / 1000f
+        val target = TrackerState.target
+        val frac = (TrackerState.progressValue() / target).coerceIn(0f, 1f)
+        val pct = "${(frac * 100).toInt()}%"
+
+        distanceText?.text = Fmt.dec(km, 2) + " km"
+        timeText?.text = Fmt.time(currentElapsed())
+        kcalText?.text = kcalStr()
+        climbText?.text = "${climbM.roundToInt()} m"
+        targetBar?.let { it.fraction = frac; it.invalidate() }
+        targetPct?.text = pct
+
+        val rl = route.toList()
+        trackMap?.sync(rl)
+        chartMap?.sync(rl)
+        routeDistText?.text = Fmt.dec(km, 2) + " km"
+        routeTimeText?.text = Fmt.time(currentElapsed())
+        routeKcalText?.text = kcalStr()
+        chartDistText?.text = Fmt.dec(km, 2) + " km"
+        chartTimeText?.text = Fmt.time(currentElapsed())
+        chartKcalText?.text = kcalStr()
+        routeAvgText?.text = Fmt.dec(averageSpeed(), 1)
+        routeMaxText?.text = Fmt.dec(maxSpeedKmh, 1)
+        routeBanner?.let { bnr ->
+            if (running && TrackerState.guide.size >= 2) {
+                bnr.visibility = View.VISIBLE
+                if (TrackerState.offRoute) {
+                    bnr.text = "⚠ Keluar rute · " + TrackerState.offDistM.toInt() + " m dari jalur"
+                    bnr.setTextColor(t.bad)
+                } else {
+                    bnr.text = "✓ Di jalur · " + TrackerState.offDistM.toInt() + " m dari garis rute"
+                    bnr.setTextColor(t.good)
+                }
+            } else {
+                bnr.visibility = View.GONE
+            }
+        }
+        routeClimbText?.text = "${climbM.roundToInt()} m"
+        routeTarget?.text = if (mode == "Jalan") Fmt.int(TrackerState.steps()) else Fmt.dec(km, 2)
+        routePct?.text = pct
+        routeBar?.let { it.fraction = frac; it.invalidate() }
+        routeGauge?.let { it.speed = speedKmh; it.maxSpeed = maxSpeedKmh; it.invalidate() }
+        chart?.let {
+            it.values = TrackerState.speedSamples.toList()
+            it.minutes = TrackerState.chartMinutes()
+            it.invalidate()
+        }
+
+        when (mode) {
+            "Lari" -> {
+                paceNowText?.text = Fmt.pace(TrackerState.paceNowSec())
+                paceAvgText?.text = "Rata-rata " + Fmt.pace(TrackerState.avgPaceSec())
+                paceBestText?.text = "Split terbaik " + Fmt.pace(TrackerState.bestSplitSec())
+                speedText?.text = Fmt.dec(speedKmh, 1) + " km/jam"
+                targetInfo?.text = "Target lari · " + Fmt.dec(km, 2) + " / " + target + " km"
+                splitsBox?.let { fillSplits(it, acc("Lari")) }
+                chartAvgText?.text = Fmt.pace(TrackerState.avgPaceSec()) + " /km"
+                chartMaxText?.text = Fmt.pace(TrackerState.bestSplitSec()) + " /km"
+            }
+            "Jalan" -> {
+                val steps = TrackerState.steps()
+                ring?.let {
+                    it.fraction = frac
+                    it.value = Fmt.int(steps)
+                    it.sub = "dari " + Fmt.int(target) + " · " + pct
+                    it.invalidate()
+                }
+                avgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                val mins = currentElapsed() / 60000f
+                val cadence = if (mins >= 0.5f) (steps / mins).roundToInt() else 0
+                cadenceText?.text = "$cadence langkah/mnt"
+                chartAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                chartMaxText?.text = "$cadence langkah/mnt"
+                ringInfo?.text = if (steps >= target) {
+                    "✓ Target tercapai, kerja bagus!"
+                } else {
+                    val remain = target - steps
+                    "Sisa " + Fmt.int(remain) + " langkah" +
+                        (if (cadence >= 30) " • sekitar " + (remain / cadence.toFloat()).roundToInt() + " menit lagi" else "")
+                }
+            }
+            else -> {
+                gauge?.let {
+                    it.speed = speedKmh
+                    it.maxSpeed = maxSpeedKmh
+                    it.invalidate()
+                }
+                avgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                maxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+                speedText?.text = Fmt.dec(speedKmh, 1) + " km/jam"
+                chartAvgText?.text = Fmt.dec(averageSpeed(), 1) + " km/jam"
+                chartMaxText?.text = Fmt.dec(maxSpeedKmh, 1) + " km/jam"
+                targetValue?.text = Fmt.dec(km, 2)
+                targetInfo?.text = if (km >= target) {
+                    "✓ Target tercapai, kerja bagus!"
+                } else {
+                    val remain = target - km
+                    val avg = averageSpeed()
+                    val eta = if (avg > 1f) (remain / avg * 60f).roundToInt() else -1
+                    "Sisa " + Fmt.dec(remain, 2) + " km" + (if (eta >= 0) " • sekitar $eta menit lagi" else "")
+                }
+            }
+        }
+    }
+
+    private fun openMap() {
+        try {
+            startActivity(Intent(this, MapActivity::class.java))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Halaman peta belum siap.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun pauseTracking() {
+        if (!running || paused) return
+        TrackerState.pause()
+        TrackerState.persist(this)
+        handler.removeCallbacks(timer)
+        sendService(TrackingService.ACTION_PAUSE)
+        showTracking()
+    }
+
+    private fun resumeTracking() {
+        if (!running || !paused) return
+        if (!hasFine()) {
+            pendingResume = true
+            askPermissions()
+            return
+        }
+        TrackerState.resume()
+        sendService(TrackingService.ACTION_RESUME)
+        showTracking()
+        handler.removeCallbacks(timer)
+        handler.post(timer)
+    }
+
+    private fun finishTracking() {
+        if (!running) return
+        val km = distanceMeters / 1000f
+        val b = AlertDialog.Builder(this).setTitle("Selesaikan aktivitas?")
+        if (km >= 0.01f) {
+            b.setMessage(String.format(Locale.US, "Jarak %.2f km • durasi %s", km, formatTime(currentElapsed())))
+            b.setPositiveButton("Simpan") { _, _ -> completeTracking(true) }
+        } else {
+            b.setMessage("Belum ada jarak yang terekam, jadi aktivitas ini belum bisa disimpan.")
+        }
+        b.setNegativeButton("Buang") { _, _ -> completeTracking(false) }
+        b.setNeutralButton("Lanjut", null)
+        b.show()
+    }
+
+    private fun completeTracking(save: Boolean) {
+        if (!running) return
+        trackPage = 0
+        val elapsed = currentElapsed()
+        handler.removeCallbacks(timer)
+        TrackerState.finish(elapsed)
+        sendService(TrackingService.ACTION_STOP)
+        TrackerState.clearSaved(this)
+        if (save) {
+            saveActivity(elapsed)
+            showSummary(elapsed)
+        } else {
+            Toast.makeText(this, "Aktivitas dibuang.", Toast.LENGTH_SHORT).show()
+            showHome()
+        }
+    }
+
+    private fun encodeRoute(): String {
+        if (route.isEmpty()) return ""
+        val step = maxOf(1, Math.ceil(route.size / 800.0).toInt())
+        val sb = StringBuilder()
+        var i = 0
+        while (i < route.size) {
+            if (sb.isNotEmpty()) sb.append(';')
+            sb.append(String.format(Locale.US, "%.5f,%.5f", route[i][0], route[i][1]))
+            i += step
+        }
+        if ((route.size - 1) % step != 0) {
+            val last = route[route.size - 1]
+            sb.append(';').append(String.format(Locale.US, "%.5f,%.5f", last[0], last[1]))
+        }
+        return sb.toString()
+    }
+
+    /** Contoh grafik dipadatkan maksimal 150 titik. Hasil: (teks, detik per titik). */
+    private fun encodeSamples(): Pair<String, Int> {
+        val src = TrackerState.speedSamples
+        var every = TrackerState.sampleSeconds()
+        if (src.isEmpty()) return Pair("", every)
+        var list: List<Float> = src.toList()
+        while (list.size > 150) {
+            val merged = ArrayList<Float>()
+            var i = 0
+            while (i + 1 < list.size) { merged.add((list[i] + list[i + 1]) / 2f); i += 2 }
+            list = merged
+            every *= 2
+        }
+        return Pair(list.joinToString(",") { String.format(Locale.US, "%.1f", it) }, every)
+    }
+
+    private fun saveActivity(elapsed: Long) {
+        val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+        val record = listOf(
+            date, mode,
+            String.format(Locale.US, "%.3f", distanceMeters / 1000f),
+            elapsed.toString(),
+            String.format(Locale.US, "%.1f", averageSpeed()),
+            String.format(Locale.US, "%.1f", maxSpeedKmh),
+            TrackerState.target.toString(),
+            encodeRoute(),
+            calories().toString(),
+            climbM.roundToInt().toString(),
+            TrackerState.movingMs.toString(),
+            encodeSamples().second.toString(),
+            encodeSamples().first
+        ).joinToString("|")
+        TrackStore.save(this, TrackStore.key(date, elapsed), route.toList())
+        if (!store.add(record)) {
+            Toast.makeText(this, "Gagal menyimpan aktivitas ke riwayat.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showSummary(elapsed: Long) {
+        val m = mode
+        val a = acc(m)
+        val r = column()
+        title(r, "RINGKASAN AKTIVITAS", "Kerja bagus! 🎉")
+
+        val km = distanceMeters / 1000f
+        val hero = card(a, 18, 24)
+        val on = onColor(a)
+        hero.addView(tv("✓  PERJALANAN TERSIMPAN", 11f, on, true))
+        hero.add(tv("${icon(m)}  $m", 16f, on, true), 8)
+        val big = if (m == "Jalan") Fmt.int(TrackerState.steps()) + " langkah" else Fmt.dec(km, 2) + " km"
+        hero.add(mono(tv(big, 34f, on, true)), 2)
+        if (m == "Jalan") hero.add(tv(Fmt.dec(km, 2) + " km", 14f, on), 2)
+        r.add(hero, 14)
+
+        r.add(RouteView(this, t).apply {
+            points = route.toList(); hint = "Rute tidak terekam"; accent = a
+        }, 10, 0f, dp(130))
+
+        val target = TrackerState.target
+        val prog = TrackerState.progressValue()
+        val reached = prog >= target
+        val label = Themes.targetLabel(m, target) + if (m == "Jalan") " langkah" else ""
+        val tc = card(t.surface, 12, 16)
+        tc.addView(tv(
+            if (reached) "✓ Target $label tercapai"
+            else "Target $label • tercapai ${(prog / target * 100f).roundToInt()}%",
+            14f, if (reached) t.good else t.text, true))
+        r.add(tc, 10)
+
+        val avgCard = when (m) {
+            "Lari" -> statCard("Pace rata-rata", Fmt.pace(TrackerState.avgPaceSec()) + " /km", t.good)
+            "Jalan" -> statCard("Langkah", Fmt.int(TrackerState.steps()), t.good)
+            else -> statCard("Rata-rata", Fmt.dec(averageSpeed(), 1) + " km/jam", t.good)
+        }
+        statRow(r, statCard("Durasi", formatTime(elapsed)), avgCard, 10)
+        val peakCard = when (m) {
+            "Lari" -> statCard("Split terbaik", Fmt.pace(TrackerState.bestSplitSec()) + " /km", a)
+            "Jalan" -> statCard("Rata-rata", Fmt.dec(averageSpeed(), 1) + " km/jam", a)
+            else -> statCard("Kecepatan maks.", Fmt.dec(maxSpeedKmh, 1) + " km/jam", a)
+        }
+        statRow(r, peakCard, statCard("Kalori", kcalStr()))
+        statRow(r, statCard("Tanjakan", "${climbM.roundToInt()} m"),
+            statCard("Jarak", Fmt.dec(km, 2) + " km"))
+
+        val shareNow = ShareData(
+            m, icon(m), SimpleDateFormat("d MMM yyyy HH:mm", Locale.forLanguageTag("id-ID")).format(Date()),
+            km, elapsed, averageSpeed(), maxSpeedKmh, calories(), climbM.roundToInt(),
+            TrackerState.steps(), TrackerState.avgPaceSec(), route.toList()
+        )
+        r.add(btn("⤴   BAGIKAN AKTIVITAS", a, 28) { ShareCard.share(this, t, a, shareNow) }, 16, 0f, dp(54))
+        r.add(btn("⌂   KEMBALI KE BERANDA", t.surface, 28) { trackPage = 0; showHome() }, 10, 0f, dp(50))
+        r.add(btn("▤   LIHAT RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
+        show(0, r)
+    }
+
+    private fun showHistory() {
+        val r = column()
+        backToProfile(r)
+        title(r, "RIWAYAT", "Perjalananmu")
+
+        val all = rawRecords().mapIndexedNotNull { i, line -> parse(line)?.let { i to it } }
+        val sc = card(t.surface, 12, 16).apply { orientation = LinearLayout.HORIZONTAL }
+        fun cell(label: String, value: String, color: Int) {
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(tv(label, 11f, t.muted))
+            col.add(tv(value, 17f, color, true), 2)
+            sc.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        cell("Total jarak", Fmt.dec(all.sumOf { it.second.km.toDouble() }, 1) + " km", t.accent)
+        cell("Perjalanan", all.size.toString(), t.text)
+        cell("Target tercapai", all.count { it.second.reached }.toString(), t.text)
+        r.add(sc, 12)
+
+        val chips = LinearLayout(this)
+        listOf("Semua", "Sepeda", "Motor", "Lari", "Jalan").forEachIndexed { i, name ->
+            val sel = name == filter
+            chips.addView(tv(name, 12f, if (sel) onColor(t.accent) else t.muted, sel).apply {
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                background = box(if (sel) t.accent else t.surface, 14, !sel)
+                setOnClickListener { filter = name; showHistory() }
+            }, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) leftMargin = dp(6) })
+        }
+        r.add(chips, 12)
+
+        val shown = all.filter { filter == "Semua" || it.second.mode == filter }
+        if (shown.isEmpty()) {
+            val e = card(t.surface, 24, 20).apply { gravity = Gravity.CENTER }
+            e.addView(tv("Belum ada perjalanan", 17f, t.text, true).apply { gravity = Gravity.CENTER })
+            e.add(tv("Perjalanan yang diselesaikan akan muncul di sini.", 12f, t.muted).apply {
+                gravity = Gravity.CENTER
+            }, 6)
+            r.add(e, 12)
+        } else {
+            // Rekor pribadi dari riwayat yang sedang ditampilkan (mengikuti filter aktivitas).
+            val recs = shown.map { it.second }
+            val farthest = recs.maxOf { it.km }
+            val longest = recs.maxOf { it.elapsed }
+            val totalMs = recs.sumOf { it.elapsed }
+            r.add(tv("REKOR PRIBADI", 11f, t.muted, true), 16)
+            statRow(r, statCard("Jarak terjauh", Fmt.dec(farthest, 2) + " km", t.accent),
+                statCard("Durasi terlama", formatTime(longest)), 8)
+            val extra = when (filter) {
+                "Lari" -> {
+                    val best = recs.mapNotNull { rc -> if (rc.km >= 1f) rc.paceSec else null }.minOrNull()
+                    statCard("Pace terbaik", Fmt.pace(best) + " /km", t.good)
+                }
+                "Jalan" -> statCard("Langkah terbanyak", Fmt.int(recs.maxOf { it.steps }), t.good)
+                "Sepeda", "Motor" -> statCard("Rata-rata tercepat", Fmt.dec(recs.maxOf { it.avgF }, 1) + " km/jam", t.good)
+                else -> statCard("Rata-rata jarak", Fmt.dec(recs.sumOf { it.km.toDouble() } / recs.size, 2) + " km", t.good)
+            }
+            statRow(r, statCard("Total durasi", formatTime(totalMs)), extra, 8)
+            r.add(tv("RIWAYAT", 11f, t.muted, true), 16)
+            for ((idx, rec) in shown) {
+                r.add(tripCard(rec, true, { showDetail(idx, rec) }) {
+                    confirm("Hapus perjalanan ini?") {
+                        store.delete(rec.f.joinToString("|"))
+                        TrackStore.delete(this, TrackStore.key(rec.date, rec.elapsed))
+                        showHistory()
+                    }
+                }, 8)
+            }
+            r.add(tv("Ketuk untuk detail • tekan lama untuk menghapus", 11f, t.muted).apply {
+                gravity = Gravity.CENTER
+            }, 10)
+            r.add(btn("Hapus semua riwayat", t.bad) {
+                confirm("Hapus semua riwayat?") {
+                    store.clear(); TrackStore.deleteAll(this); showHistory()
+                }
+            }, 10, 0f, dp(48))
+        }
+        show(4, r, true)
+    }
+
+    private fun showDetail(idx: Int, rec: Rec) {
+        val a = acc(rec.mode)
+        val r = column()
+        title(r, "DETAIL AKTIVITAS", rec.date)
+
+        val hero = card(a, 18, 24)
+        val on = onColor(a)
+        hero.addView(tv("${icon(rec.mode)}  ${rec.mode}", 16f, on, true))
+        hero.add(mono(tv(Fmt.dec(rec.km, 2) + " km", 34f, on, true)), 2)
+        r.add(hero, 14)
+
+        r.add(RouteView(this, t).apply {
+            points = rec.route; hint = "Rute tidak terekam"; accent = a
+        }, 10, 0f, dp(150))
+
+        if (rec.samples.size >= 2) {
+            val gc = card(t.surface, 14, 16)
+            gc.addView(tv(if (rec.mode == "Lari") "Grafik Pace (menit/km)" else "Grafik Kecepatan", 14f, t.text, true))
+            val gv = ChartView(this, t, a)
+            if (rec.mode == "Lari") {
+                gv.yTitle = "min/km"
+                gv.label = { v -> if (v < 1.5f) "" else Fmt.pace((3600f / v).roundToInt()) }
+            }
+            gv.values = rec.samples
+            gv.minutes = rec.samples.size * (if (rec.sampleSec > 0) rec.sampleSec else 5) / 60f
+            gc.add(gv, 6, 0f, dp(200))
+            r.add(gc, 10)
+        }
+
+        if (rec.target > 0f) {
+            val tc = card(t.surface, 12, 16)
+            tc.addView(tv(
+                if (rec.reached) "✓ Target ${rec.targetText} tercapai"
+                else "Target ${rec.targetText} belum tercapai",
+                14f, if (rec.reached) t.good else t.text, true))
+            r.add(tc, 10)
+        }
+
+        val second = when (rec.mode) {
+            "Lari" -> statCard("Pace rata-rata", Fmt.pace(rec.paceSec) + " /km", t.good)
+            else -> statCard("Rata-rata", Fmt.dec(rec.avgF, 1) + " km/jam", t.good)
+        }
+        statRow(r, statCard("Durasi", formatTime(rec.elapsed)), second, 10)
+        statRow(r, statCard("Kecepatan maks.", Fmt.dec(rec.maxF, 1) + " km/jam", a),
+            statCard("Kalori", recKcal(rec)))
+        if (rec.moving > 0L) {
+            statRow(r, statCard("Waktu bergerak", formatTime(rec.moving)),
+                statCard("Waktu berhenti", formatTime((rec.elapsed - rec.moving).coerceAtLeast(0L))))
+        }
+        statRow(r, statCard("Tanjakan", "${rec.climb} m"),
+            if (rec.mode == "Jalan") statCard("Langkah", Fmt.int(rec.steps))
+            else statCard("Titik rute", rec.route.size.toString()))
+
+        if (rec.route.isNotEmpty()) {
+            r.add(btn("⌖   LIHAT DI PETA", a, 28) {
+                val flat = DoubleArray(rec.route.size * 2)
+                rec.route.forEachIndexed { i, p -> flat[i * 2] = p[0]; flat[i * 2 + 1] = p[1] }
+                try {
+                    startActivity(
+                        Intent(this, MapActivity::class.java)
+                            .putExtra("route", flat)
+                            .putExtra("mode", rec.mode)
+                            .putExtra("km", rec.km)
+                            .putExtra("elapsed", rec.elapsed)
+                            .putExtra("avg", rec.avgF)
+                            .putExtra("max", rec.maxF)
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Halaman peta belum siap.", Toast.LENGTH_LONG).show()
+                }
+            }, 16, 0f, dp(54))
+        }
+        r.add(btn("⤴   BAGIKAN AKTIVITAS", a, 28) {
+            ShareCard.share(this, t, a, ShareData(
+                rec.mode, icon(rec.mode), rec.date, rec.km, rec.elapsed, rec.avgF, rec.maxF,
+                rec.kcal.toIntOrNull() ?: 0, rec.climb.toIntOrNull() ?: 0, rec.steps, rec.paceSec, rec.route
+            ))
+        }, 10, 0f, dp(54))
+        if (rec.route.size >= 2) {
+            r.add(btn("⇩   EKSPOR GPX", t.surface) {
+                // Jalur lengkap (dengan waktu dan tinggi) kalau ada; aktivitas lama memakai rute yang dipadatkan.
+                val full = TrackStore.load(this, TrackStore.key(rec.date, rec.elapsed))
+                val pts = if (full.size >= 2) full else rec.route
+                FileOut.saveAndShare(this, GpxExport.fileName(rec.mode, rec.date), "application/gpx+xml",
+                    GpxExport.build(rec.mode + " " + rec.date, pts), "Ekspor GPX")
+            }, 10, 0f, dp(50))
+        }
+        if (rec.route.size >= 2) {
+            r.add(btn("🧭   SIMPAN SEBAGAI RUTE", t.surface) { saveRecAsRoute(rec) }, 10, 0f, dp(50))
+        }
+        r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
+        r.add(btn("Hapus perjalanan ini", t.bad) {
+            confirm("Hapus perjalanan ini?") {
+                store.delete(rec.f.joinToString("|"))
+                TrackStore.delete(this, TrackStore.key(rec.date, rec.elapsed))
+                showHistory()
+            }
+        }, 10, 0f, dp(48))
+
+        show(4, r, true)
+        inDetail = true
+    }
+
+    // ---------- Rute tersimpan ----------
+
+    private fun etaText(min: Int): String =
+        if (min >= 60) "${min / 60} j ${min % 60} mnt" else "$min mnt"
+
+    private fun routeInfo(rt: SavedRoute): String {
+        val climb = if (rt.climb >= 0) "${rt.climb} m naik • " else ""
+        return Fmt.dec(rt.km, 1) + " km • " + climb + etaText(rt.etaMin())
+    }
+
+    private fun followText(rt: SavedRoute): String =
+        if (rt.count == 0) "belum diikuti" else "diikuti ${rt.count}×"
+
+    private fun lastText(ms: Long): String {
+        if (ms <= 0L) return "Belum pernah"
+        val days = ((System.currentTimeMillis() - ms) / 86400000L).toInt()
+        return when {
+            days <= 0 -> "Hari ini"
+            days == 1 -> "Kemarin"
+            else -> "$days hari lalu"
+        }
+    }
+
+    private fun routesEmpty(noRoutes: Boolean): LinearLayout {
+        val c = card(t.surface, 18, 16)
+        c.addView(tv(if (noRoutes) "Belum ada rute tersimpan" else "Tidak ada rute yang cocok", 15f, t.text, true))
+        c.add(tv(
+            if (noRoutes) "Buat rute di peta, impor dari file GPX, atau simpan dari riwayat aktivitasmu."
+            else "Coba kata kunci atau filter lain.",
+            12f, t.muted
+        ), 4)
+        if (noRoutes) c.add(btn("Tambah rute", t.accent, 22) { addRouteSheet() }, 12, 0f, dp(46))
+        return c
+    }
+
+    private fun routeCard(rt: SavedRoute): LinearLayout {
+        val a = acc(rt.mode)
+        val c = card(t.surface, 10, 14).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { showRouteDetail(rt.id) }
+        }
+        c.addView(RouteView(this, t, true).apply { points = rt.points; accent = a }, LinearLayout.LayoutParams(dp(60), dp(60)))
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mid.addView(tv(rt.name, 14f, t.text, true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        mid.add(tv(routeInfo(rt), 12f, t.muted), 2)
+        mid.add(tv(icon(rt.mode) + " " + rt.mode + " • " + followText(rt), 12f, a), 4)
+        c.addView(mid, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
+        val side = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+        }
+        side.addView(tv(if (rt.fav) "★" else "☆", 20f, if (rt.fav) t.accent else t.muted, true).apply {
+            contentDescription = "Favorit"
+            setPadding(dp(8), 0, 0, dp(4))
+            setOnClickListener {
+                SavedRoutes.toggleFav(this@MainActivity, rt.id)
+                routesRefill()
+            }
+        })
+        side.addView(tv("Ikuti", 12f, t.accent, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(t.surface)
+                setStroke(dp(1), t.accent)
+            }
+            setOnClickListener { followRoute(rt) }
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        c.addView(side, LinearLayout.LayoutParams(-2, -2))
+        return c
+    }
+
+    /** Daftar rute tersimpan: cari, saring per aktivitas atau favorit, lalu ketuk untuk detail. */
+    private fun showRoutes() {
+        val r = column()
+        backToProfile(r)
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val ttl = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ttl.addView(tv("RUTE", 11f, t.accent, true))
+        ttl.add(tv("Rute tersimpan", 24f, t.text, true), 2)
+        head.addView(ttl, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(tv("+", 24f, onColor(t.accent), true).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Tambah rute"
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.accent) }
+            setOnClickListener { addRouteSheet() }
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        r.add(head, 4)
+
+        val search = EditText(this).apply {
+            hint = "Cari rute"
+            setText(routeQuery)
+            setSingleLine(true)
+            textSize = 14f
+            setTextColor(t.text)
+            setHintTextColor(t.muted)
+            setPadding(dp(14), 0, dp(14), 0)
+            background = box(t.surface, 12, true)
+        }
+        r.add(search, 12, 0f, dp(42))
+
+        val summary = tv("", 12f, t.muted)
+        val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val chipViews = ArrayList<Pair<String, TextView>>()
+
+        fun restyle() {
+            for (pr in chipViews) {
+                val on = pr.first == routeFilter
+                pr.second.setTextColor(if (on) onColor(t.accent) else t.text)
+                pr.second.background = box(if (on) t.accent else t.surface, 20, !on)
+            }
+        }
+
+        fun refill() {
+            listBox.removeAllViews()
+            val everything = SavedRoutes.all(this)
+            val q = routeQuery.trim().lowercase(Locale.getDefault())
+            val items = everything.filter { rt ->
+                val okF = routeFilter == "Semua" || (routeFilter == "Favorit" && rt.fav) || rt.mode == routeFilter
+                val okQ = q.isEmpty() || rt.name.lowercase(Locale.getDefault()).contains(q)
+                okF && okQ
+            }
+            summary.text = if (items.isEmpty()) "" else "${items.size} rute • ${Fmt.dec(items.sumOf { it.km }, 1)} km total"
+            if (items.isEmpty()) {
+                listBox.add(routesEmpty(everything.isEmpty()), 8)
+            } else {
+                for (rt in items) listBox.add(routeCard(rt), 8)
+            }
+        }
+        routesRefill = { refill() }
+
+        val chipRow = LinearLayout(this)
+        for (name in listOf("Semua", "Sepeda", "Motor", "Lari", "Jalan", "Favorit")) {
+            val chip = tv(name, 12f, t.text, true).apply {
+                setPadding(dp(14), dp(7), dp(14), dp(7))
+                setOnClickListener {
+                    routeFilter = name
+                    restyle()
+                    refill()
+                }
+            }
+            chipViews.add(Pair(name, chip))
+            chipRow.addView(chip, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) })
+        }
+        restyle()
+        val chipScroll = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(chipRow)
+        }
+        r.add(chipScroll, 10)
+        r.add(summary, 10)
+        r.add(listBox, 2)
+
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                routeQuery = s?.toString() ?: ""
+                refill()
+            }
+        })
+        refill()
+        show(4, r, true)
+    }
+
+    private fun showRouteDetail(id: String) {
+        val rt = SavedRoutes.find(this, id)
+        if (rt == null) {
+            showRoutes()
+            return
+        }
+        val a = acc(rt.mode)
+        val r = column()
+        r.add(tv("‹  Rute tersimpan", 13f, t.accent, true).apply {
+            setPadding(0, 0, dp(16), dp(8))
+            setOnClickListener { showRoutes() }
+        })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val ttl = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ttl.addView(tv(icon(rt.mode) + "  " + rt.mode.uppercase(Locale.getDefault()), 11f, a, true))
+        ttl.add(tv(rt.name, 22f, t.text, true), 2)
+        head.addView(ttl, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(tv(if (rt.fav) "★" else "☆", 26f, if (rt.fav) t.accent else t.muted, true).apply {
+            contentDescription = "Favorit"
+            setPadding(dp(12), dp(4), 0, dp(4))
+            setOnClickListener {
+                SavedRoutes.toggleFav(this@MainActivity, rt.id)
+                showRouteDetail(rt.id)
+            }
+        })
+        r.add(head, 2)
+
+        r.add(RouteView(this, t).apply {
+            points = rt.points; hint = "Rute kosong"; accent = a
+        }, 12, 0f, dp(170))
+
+        statRow(r, statCard("Jarak", Fmt.dec(rt.km, 2) + " km", a),
+            statCard("Tanjakan", if (rt.climb >= 0) "${rt.climb} m" else "–"), 10)
+        statRow(r, statCard("Perkiraan waktu", etaText(rt.etaMin())),
+            statCard("Terakhir diikuti", lastText(rt.last)), 8)
+
+        if (rt.alts.size >= 2) {
+            val pc = card(t.surface, 14, 16)
+            pc.addView(tv("Profil tinggi", 13f, t.muted))
+            pc.add(ProfileView(this, t).apply { values = rt.alts; accent = a }, 6, 0f, dp(90))
+            r.add(pc, 10)
+        }
+
+        val active = SavedRoutes.activeId(this) == rt.id
+        r.add(btn(if (active) "✓   DIPAKAI SEBAGAI PANDUAN" else "➤   IKUTI RUTE", a, 28) { followRoute(rt) }, 14, 0f, dp(54))
+        val row = LinearLayout(this)
+        row.addView(btn("⇩  Ekspor GPX", t.surface) { exportRoute(rt) }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        row.addView(btn("✎  Ganti nama", t.surface) {
+            askText("Ganti nama", "Nama rute", rt.name) { typed ->
+                SavedRoutes.rename(this, rt.id, typed)
+                showRouteDetail(rt.id)
+            }
+        }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
+        r.add(row, 10)
+        if (active) {
+            r.add(btn("Matikan panduan", t.surface) {
+                SavedRoutes.clearActive(this)
+                showRouteDetail(rt.id)
+            }, 10, 0f, dp(46))
+        }
+        r.add(btn("Hapus rute", t.bad) {
+            confirm("Hapus rute ini?") {
+                SavedRoutes.delete(this, rt.id)
+                showRoutes()
+            }
+        }, 10, 0f, dp(46))
+
+        show(4, r, true)
+        routeDetail = true
+    }
+
+    /** Pakai rute sebagai garis panduan, lalu buka layar Mulai (kalau belum merekam). */
+    private fun followRoute(rt: SavedRoute) {
+        SavedRoutes.activate(this, rt.id)
+        if (running) {
+            TrackerState.loadGuide(this)
+            Toast.makeText(this, "Rute \"" + rt.name + "\" dipakai sebagai panduan.", Toast.LENGTH_LONG).show()
+            return
+        }
+        mode = rt.mode
+        Toast.makeText(this, "Rute \"" + rt.name + "\" jadi garis panduan. Tekan Mulai untuk merekam.", Toast.LENGTH_LONG).show()
+        showMulai()
+    }
+
+    private fun exportRoute(rt: SavedRoute) {
+        val stamp = rt.id.toLongOrNull()?.let { SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date(it)) } ?: rt.id
+        FileOut.saveAndShare(this, GpxExport.fileName("Rute", rt.name + "_" + stamp), "application/gpx+xml",
+            GpxExport.build(rt.name, rt.points), "Ekspor GPX")
+    }
+
+    private fun addRouteSheet() {
+        val items = arrayOf("Buat rute di peta", "Impor dari file GPX", "Simpan dari riwayat aktivitas")
+        AlertDialog.Builder(this).setTitle("Tambah rute")
+            .setItems(items) { _, i ->
+                when (i) {
+                    0 -> {
+                        Toast.makeText(this, "Ketuk peta untuk menambah titik, lalu tekan Simpan rute.", Toast.LENGTH_LONG).show()
+                        openMap()
+                    }
+                    1 -> routeGpxPick()
+                    else -> pickHistoryForRoute()
+                }
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun pickHistoryForRoute() {
+        val recs = rawRecords().mapNotNull { parse(it) }.filter { it.route.size >= 2 }.take(30)
+        if (recs.isEmpty()) {
+            Toast.makeText(this, "Belum ada aktivitas dengan rute di riwayat.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val names = recs.map { icon(it.mode) + " " + it.date + " • " + Fmt.dec(it.km, 1) + " km" }
+        AlertDialog.Builder(this).setTitle("Pilih aktivitas")
+            .setItems(names.toTypedArray()) { _, which -> saveRecAsRoute(recs[which]) { showRoutes() } }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun saveRecAsRoute(rec: Rec, after: () -> Unit = {}) {
+        val def = rec.mode + " " + rec.date
+        askText("Simpan sebagai rute", "Nama rute", def) { typed ->
+            val full = TrackStore.load(this, TrackStore.key(rec.date, rec.elapsed))
+            val pts = if (full.size >= 2) full else rec.route
+            val id = SavedRoutes.addFromPoints(
+                this, typed.ifEmpty { def }, rec.mode, pts, rec.km.toDouble(), rec.climb.toIntOrNull() ?: -1
+            )
+            if (id == null) {
+                Toast.makeText(this, "Rute terlalu pendek untuk disimpan.", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Rute disimpan di Rute tersimpan", Toast.LENGTH_SHORT).show()
+                after()
+            }
+        }
+    }
+
+    private fun routeGpxPick() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqRouteGpx)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih file.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Baca GPX di thread latar belakang, tanya jenis aktivitas dan nama, lalu simpan sebagai rute. */
+    private fun handleRouteGpx(uri: Uri) {
+        Thread {
+            val pts = try {
+                val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                GpxImport.parsePoints(text)
+            } catch (e: Exception) {
+                emptyList<DoubleArray>()
+            }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                if (pts.size < 2) {
+                    Toast.makeText(this, getString(R.string.import_gpx_fail), Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                var meters = 0.0
+                for (i in 1 until pts.size) meters += GpxImport.meters(pts[i - 1], pts[i])
+                var climb = 0.0
+                var ref = Double.NaN
+                var hasEle = false
+                for (p in pts) {
+                    val e = p[2]
+                    if (e.isNaN()) continue
+                    hasEle = true
+                    if (ref.isNaN()) {
+                        ref = e
+                    } else if (e - ref >= 3.0) {
+                        climb += e - ref
+                        ref = e
+                    } else if (ref - e >= 3.0) {
+                        ref = e
+                    }
+                }
+                val climbM = if (hasEle) Math.round(climb).toInt() else -1
+                AlertDialog.Builder(this)
+                    .setTitle(getString(R.string.import_gpx_pick_mode))
+                    .setItems(modes.toTypedArray()) { _, which ->
+                        val m = modes[which]
+                        askText("Nama rute", "Nama rute", m + " GPX") { typed ->
+                            val id = SavedRoutes.addFromPoints(
+                                this, typed.ifEmpty { m + " GPX" }, m, pts, meters / 1000.0, climbM
+                            )
+                            Toast.makeText(this, if (id == null) "Rute terlalu pendek." else "Rute disimpan", Toast.LENGTH_SHORT).show()
+                            showRoutes()
+                        }
+                    }
+                    .setNegativeButton("Batal", null)
+                    .show()
+            }
+        }.start()
+    }
+
+    private fun startFlashBlink() {
+        val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
+        ap.edit().putBoolean("flash_blink_enabled", true).apply()
+        val intent = Intent(this, FlashBlinkService::class.java).setAction(FlashBlinkService.ACTION_START)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            Toast.makeText(this, "Kedip flash aktif: 2× cepat setiap " + fmtFlashInterval(ap.getInt(FlashBlinkService.PREF_INTERVAL, FlashBlinkService.DEFAULT_INTERVAL_S)), Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            ap.edit().putBoolean("flash_blink_enabled", false).apply()
+            Toast.makeText(this, "Flash tidak dapat diaktifkan pada perangkat ini.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun stopFlashBlink() {
+        getSharedPreferences("bike_history", MODE_PRIVATE).edit().putBoolean("flash_blink_enabled", false).apply()
+        stopService(Intent(this, FlashBlinkService::class.java))
+        Toast.makeText(this, "Kedip flash dimatikan", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showSettings() {
+        val r = column()
+        backToProfile(r)
+        title(r, "PENGATURAN", "Atur")
+        r.add(tv("UMUM", 11f, t.muted, true), 20)
+        r.add(stepper("Berat badan", "Untuk perkiraan kalori", "${Themes.weight(this)} kg",
+            { Themes.stepWeight(this, -1); showSettings() },
+            { Themes.stepWeight(this, 1); showSettings() }), 8)
+        for (m in modes) {
+            r.add(stepper("${icon(m)} Target $m", targetSub(m), Themes.targetLabel(m, Themes.target(this, m)),
+                { Themes.stepTarget(this, m, -1); showSettings() },
+                { Themes.stepTarget(this, m, 1); showSettings() }, acc(m)), 8)
+        }
+        val on = Themes.keepOn(this)
+        r.add(btn("Layar menyala saat tracking: " + (if (on) "AKTIF" else "MATI"), t.surface) {
+            Themes.setKeepOn(this, !on); showSettings()
+        }, 8, 0f, dp(52))
+
+        r.add(tv("PERINGATAN KELUAR RUTE", 11f, t.muted, true), 20)
+        val ap = getSharedPreferences("bike_history", MODE_PRIVATE)
+        val routeOn = ap.getBoolean("alert_route", true)
+        r.add(btn("Peringatan keluar rute: " + (if (routeOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_route", !routeOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val vibOn = ap.getBoolean("alert_vibe", true)
+        r.add(btn("Getar peringatan: " + (if (vibOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_vibe", !vibOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val sndOn = ap.getBoolean("alert_sound", true)
+        r.add(btn("Suara peringatan: " + (if (sndOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_sound", !sndOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val voiceOn = ap.getBoolean("alert_voice", true)
+        r.add(btn("Suara tiap kilometer: " + (if (voiceOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("alert_voice", !voiceOn).apply(); showSettings()
+        }, 8, 0f, dp(52))
+        val autoOn = ap.getBoolean("auto_pause", true)
+        r.add(btn("Jeda otomatis saat berhenti: " + (if (autoOn) "AKTIF" else "MATI"), t.surface) {
+            ap.edit().putBoolean("auto_pause", !autoOn).apply()
+            TrackerState.autoPause = !autoOn
+            showSettings()
+        }, 8, 0f, dp(52))
+
+        val flashOn = ap.getBoolean("flash_blink_enabled", false)
+        val flashSec = ap.getInt(FlashBlinkService.PREF_INTERVAL, FlashBlinkService.DEFAULT_INTERVAL_S)
+        r.add(btn("✈  Kedip flash 2× tiap ${fmtFlashInterval(flashSec)}: " + (if (flashOn) "AKTIF" else "MATI"), t.surface) {
+            if (flashOn) {
+                stopFlashBlink()
+            } else if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                startFlashBlink()
+            } else {
+                requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_FLASH)
+            }
+            showSettings()
+        }, 8, 0f, dp(52))
+
+        r.add(btn("⏱  Jeda antar kedip: " + fmtFlashInterval(flashSec) + "  (ketuk untuk ganti)", t.surface) {
+            val labels = FLASH_INTERVALS.map { fmtFlashInterval(it) }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("Jeda antar kedip flash")
+                .setSingleChoiceItems(labels, FLASH_INTERVALS.indexOf(flashSec).coerceAtLeast(0)) { d, which ->
+                    ap.edit().putInt(FlashBlinkService.PREF_INTERVAL, FLASH_INTERVALS[which]).apply()
+                    if (flashOn) startFlashBlink()  // mulai ulang dengan jeda baru
+                    d.dismiss()
+                    showSettings()
+                }
+                .setNegativeButton("Batal", null)
+                .show()
+        }, 8, 0f, dp(52))
+
+        r.add(tv("DATA DAN BATERAI", 11f, t.muted, true), 20)
+        r.add(btn("⇩   Cadangkan riwayat", t.surface) { exportHistory() }, 8, 0f, dp(52))
+        r.add(btn("⇧   Pulihkan riwayat dari file", t.surface) { importHistoryPick() }, 8, 0f, dp(52))
+        r.add(btn(getString(R.string.import_gpx_button), t.surface) { importGpxPick() }, 8, 0f, dp(52))
+        r.add(btn("▤   Ekspor riwayat (CSV untuk Excel/Sheets)", t.surface) { exportCsv() }, 8, 0f, dp(52))
+        val ignoring = batteryIgnored()
+        r.add(btn("Hemat baterai: " + (if (ignoring) "DIKECUALIKAN (baik)" else "BELUM DIKECUALIKAN — ketuk untuk atur"), t.surface) {
+            openBatterySettings()
+        }, 8, 0f, dp(52))
+
+        r.add(tv("Delaas • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+            gravity = Gravity.CENTER
+        }, 20)
+        show(4, r, true)
+    }
+
+    /** Halaman Tema: pilih warna aplikasi. */
+    private fun showTheme() {
+        val r = column()
+        backToProfile(r)
+        title(r, "TEMA", "Warna aplikasi")
+        r.add(tv("Ketuk untuk memilih. Tema langsung dipakai di semua layar.", 12f, t.muted), 4)
+        Themes.all.forEachIndexed { i, th ->
+            val sel = i == Themes.index(this)
+            val row = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                background = GradientDrawable().apply {
+                    setColor(th.bg); cornerRadius = dp(16).toFloat()
+                    setStroke(dp(if (sel) 3 else 1), if (sel) th.accent else th.surface2)
+                }
+                setOnClickListener { Themes.save(this@MainActivity, i); applyTheme(); showTheme() }
+            }
+            row.addView(tv(th.name, 15f, th.text, true), LinearLayout.LayoutParams(0, -2, 1f))
+            for (c in listOf(th.accent, th.good, th.surface, th.bad)) {
+                row.addView(View(this).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL; setColor(c); setStroke(dp(1), 0x33888888)
+                    }
+                }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { leftMargin = dp(6) })
+            }
+            if (sel) row.addView(tv("  ✓", 16f, th.accent, true))
+            r.add(row, 10)
+        }
+        show(4, r, true)
+    }
+
+    // ---------- Profil ----------
+
+    private fun askText(title: String, hint: String, initial: String, ok: (String) -> Unit) {
+        val input = EditText(this).apply {
+            setText(initial)
+            setSelection(text.length)
+            this.hint = hint
+            setSingleLine(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        AlertDialog.Builder(this).setTitle(title).setView(input)
+            .setPositiveButton("Simpan") { _, _ -> ok(input.text.toString().trim()) }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    /** Lingkaran foto profil; kalau belum ada foto, tampil huruf pertama nama. */
+    private fun avatar(sizeDp: Int): View {
+        val size = dp(sizeDp)
+        val bmp = ProfileStore.loadPhoto(this)
+        val circleOutline = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        if (bmp != null) {
+            return ImageView(this).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                outlineProvider = circleOutline
+                clipToOutline = true
+                layoutParams = LinearLayout.LayoutParams(size, size)
+                contentDescription = "Foto profil"
+            }
+        }
+        return tv(ProfileStore.displayName(this).take(1).uppercase(Locale.getDefault()), (sizeDp / 2.4f), onColor(t.accent), true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.accent) }
+            layoutParams = LinearLayout.LayoutParams(size, size)
+        }
+    }
+
+    private fun pickPhoto() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqPhoto)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih foto.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun profileRow(emoji: String, label: String, sub: String, onClick: () -> Unit): LinearLayout {
+        val c = card(t.surface, 14, 16).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { onClick() }
+        }
+        c.addView(tv(emoji, 20f, t.text).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(36), -2))
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mid.addView(tv(label, 15f, t.text, true))
+        mid.add(tv(sub, 11f, t.muted), 2)
+        c.addView(mid, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        c.addView(tv("›", 22f, t.muted, true))
+        return c
+    }
+
+    /** Profil: foto, nama, ringkasan, lalu menuju Riwayat, Tema, dan Atur. */
+    private fun showProfile() {
+        val r = column()
+        title(r, "PROFIL", "Akun saya")
+
+        val hc = card(t.surface, 16, 22).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        val av = avatar(96)
+        av.setOnClickListener { pickPhoto() }
+        hc.addView(av)
+        hc.add(tv(ProfileStore.displayName(this), 20f, t.text, true).apply { gravity = Gravity.CENTER }, 10)
+        hc.add(tv(if (ProfileStore.name(this).isEmpty()) "Ketuk Ubah nama untuk mengisi namamu" else "Pengguna Delaas",
+            12f, t.muted).apply { gravity = Gravity.CENTER }, 2)
+        val actions = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        actions.addView(btn("Ubah foto", t.surface2, 18) { pickPhoto() }, LinearLayout.LayoutParams(0, dp(42), 1f))
+        actions.addView(btn("Ubah nama", t.surface2, 18) {
+            askText("Nama kamu", "Contoh: Taupik", ProfileStore.name(this)) {
+                ProfileStore.setName(this, it); showProfile()
+            }
+        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(8) })
+        hc.add(actions, 14)
+        if (ProfileStore.hasPhoto(this)) {
+            hc.add(tv("Hapus foto", 12f, t.bad, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(4))
+                setOnClickListener { ProfileStore.removePhoto(this@MainActivity); showProfile() }
+            }, 6)
+        }
+        r.add(hc, 12)
+
+        val recs = rawRecords().mapNotNull { parse(it) }
+        val sc = card(t.surface, 12, 16).apply { orientation = LinearLayout.HORIZONTAL }
+        fun cell(label: String, value: String, color: Int) {
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(tv(label, 11f, t.muted))
+            col.add(tv(value, 17f, color, true), 2)
+            sc.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        cell("Total jarak", Fmt.dec(recs.sumOf { it.km.toDouble() }, 1) + " km", t.accent)
+        cell("Aktivitas", recs.size.toString(), t.text)
+        cell("Total durasi", Fmt.hm(recs.sumOf { it.elapsed }), t.text)
+        r.add(sc, 10)
+
+        val routeN = SavedRoutes.all(this).size
+        r.add(profileRow("▤", "Riwayat", if (recs.isEmpty()) "Belum ada perjalanan" else "${recs.size} perjalanan tersimpan") { showHistory() }, 12)
+        r.add(profileRow("🧭", "Rute tersimpan", if (routeN == 0) "Belum ada rute" else "$routeN rute tersimpan") { showRoutes() }, 8)
+        r.add(profileRow("🎨", "Tema", Themes.current(this).name) { showTheme() }, 8)
+        r.add(profileRow("⚙", "Atur", "Target, berat badan, peringatan, cadangan") { showSettings() }, 8)
+
+        r.add(tv("Delaas • Tanpa iklan • Data tersimpan di HP", 11f, t.muted).apply {
+            gravity = Gravity.CENTER
+        }, 20)
+        show(4, r)
+    }
+
+    // ---------- Grup ----------
+
+    private fun shareText(text: String, chooser: String) {
+        try {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+            }, chooser))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka menu bagikan.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun memberRow(name: String, you: Boolean, onLong: (() -> Unit)?): LinearLayout {
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val dot = tv(name.take(1).uppercase(Locale.getDefault()), 14f, onColor(acc("Sepeda")), true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL; setColor(if (you) t.accent else acc("Sepeda"))
+            }
+        }
+        row.addView(dot, LinearLayout.LayoutParams(dp(34), dp(34)))
+        row.addView(tv(name, 14f, t.text, you), LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
+        if (you) row.addView(tv("KAMU", 10f, t.accent, true))
+        if (onLong != null) row.setOnLongClickListener { onLong(); true }
+        return row
+    }
+
+    /** Grup: buat atau gabung grup dengan kode undangan, daftar teman, dan peta titik kumpul. */
+    private fun showGroup() {
+        val a = acc("Sepeda")
+        val r = column()
+        title(r, "GRUP", "Bersepeda bareng teman")
+
+        if (!GroupStore.inGroup(this)) {
+            val hero = card(t.surface, 18, 24)
+            hero.addView(tv("👥", 30f, t.text))
+            hero.add(tv("Lebih seru bersama.", 22f, t.text, true), 6)
+            hero.add(tv("Mulai grup, bagikan kode undangan kepada teman, dan tandai titik kumpul di peta.", 13f, t.muted), 6)
+            hero.add(btn("+   Buat grup", t.accent, 24) {
+                askText("Nama grup", "Contoh: Gowes Minggu Pagi", "") {
+                    GroupStore.create(this, it); showGroup()
+                }
+            }, 14, 0f, dp(50))
+            r.add(hero, 12)
+
+            val jc = card(t.surface, 16, 20)
+            jc.addView(tv("Gabung grup teman", 16f, t.text, true))
+            jc.add(tv("Kode undangan", 12f, t.muted), 8)
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            val input = EditText(this).apply {
+                hint = "Contoh: RIDE42"
+                setHintTextColor(t.muted)
+                setTextColor(t.text)
+                setSingleLine(true)
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                filters = arrayOf<android.text.InputFilter>(android.text.InputFilter.LengthFilter(8))
+                setPadding(dp(14), 0, dp(14), 0)
+                background = box(t.bg, 14, true)
+            }
+            row.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+            row.addView(btn("Gabung", t.surface2, 14) {
+                val code = GroupStore.cleanCode(input.text.toString())
+                if (code == null) {
+                    Toast.makeText(this, "Kode terdiri dari 4–8 huruf atau angka.", Toast.LENGTH_SHORT).show()
+                } else {
+                    GroupStore.join(this, code); showGroup()
+                }
+            }, LinearLayout.LayoutParams(dp(96), dp(48)).apply { leftMargin = dp(10) })
+            jc.add(row, 6)
+            r.add(jc, 10)
+        } else {
+            val code = GroupStore.code(this)
+            val gc = card(t.surface, 16, 20)
+            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            head.addView(tv("Grup perjalanan", 16f, t.text, true), LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(tv("GRUP LOKAL", 10f, t.good, true).apply {
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = box((t.good and 0x00FFFFFF) or 0x26000000, 12)
+            })
+            gc.addView(head)
+            val info = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            left.addView(tv(GroupStore.name(this), 15f, t.text, true))
+            left.add(mono(tv("Kode: $code", 13f, a, true)), 2)
+            info.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
+            info.addView(btn("Kode", t.surface2, 14) {
+                shareText("Gabung grup bersepeda saya di Delaas. Kode undangan: $code", "Bagikan kode undangan")
+            }, LinearLayout.LayoutParams(dp(88), dp(44)))
+            gc.add(info, 12)
+
+            gc.add(tv("ANGGOTA", 11f, t.muted, true), 14)
+            gc.addView(memberRow(ProfileStore.displayName(this), true, null))
+            for (m in GroupStore.members(this)) {
+                gc.addView(memberRow(m, false) {
+                    confirm("Hapus $m dari daftar?") { GroupStore.removeMember(this, m); showGroup() }
+                })
+            }
+            gc.add(btn("+   Tambah teman", t.surface2, 14) {
+                askText("Nama teman", "Contoh: Budi", "") { GroupStore.addMember(this, it); showGroup() }
+            }, 8, 0f, dp(44))
+            gc.add(tv("Tekan lama nama teman untuk menghapus.", 11f, t.muted), 6)
+            r.add(gc, 12)
+
+            // Peta grup: posisi saya dan titik kumpul
+            val mc = card(t.surface, 12, 20)
+            mc.addView(tv("Peta grup", 16f, t.text, true))
+            mc.add(tv("Posisimu dan titik kumpul tampil di peta.", 12f, t.muted), 2)
+            val mp = MapPanel(this, t, a, false, false, "bike", true)
+            groupMap = mp
+            fun drawMeet() {
+                mp.clearPoints()
+                GroupStore.meet(this)?.let { mp.markPoint(it[0], it[1], "Titik kumpul") }
+            }
+            mp.onMapReady = {
+                drawMeet()
+                val fix = TrackerState.lastFix
+                if (fix != null) mp.position(fix.latitude, fix.longitude)
+                else GroupStore.meet(this)?.let { mp.focusPoint(it[0], it[1]) }
+            }
+            mc.add(mp, 10, 0f, dp(280))
+            val row = LinearLayout(this)
+            row.addView(btn("📍 Titik kumpul", a, 16) {
+                val fix = TrackerState.lastFix
+                if (fix == null) {
+                    Toast.makeText(this, "Menunggu sinyal GPS…", Toast.LENGTH_SHORT).show()
+                } else {
+                    GroupStore.setMeet(this, fix.latitude, fix.longitude)
+                    drawMeet()
+                    Toast.makeText(this, "Titik kumpul ditandai di posisimu sekarang.", Toast.LENGTH_SHORT).show()
+                }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f))
+            row.addView(btn("⤴ Bagikan", t.surface2, 16) {
+                val meet = GroupStore.meet(this)
+                val fix = TrackerState.lastFix
+                val lines = ArrayList<String>()
+                lines.add("Grup ${GroupStore.name(this)} (kode $code)")
+                if (meet != null) lines.add(String.format(Locale.US, "Titik kumpul: https://maps.google.com/?q=%.6f,%.6f", meet[0], meet[1]))
+                if (fix != null) lines.add(String.format(Locale.US, "Posisi saya: https://maps.google.com/?q=%.6f,%.6f", fix.latitude, fix.longitude))
+                if (meet == null && fix == null) {
+                    Toast.makeText(this, "Belum ada posisi atau titik kumpul untuk dibagikan.", Toast.LENGTH_SHORT).show()
+                } else {
+                    shareText(lines.joinToString("\n"), "Bagikan lokasi")
+                }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
+            mc.add(row, 10)
+            if (GroupStore.meet(this) != null) {
+                mc.add(tv("Hapus titik kumpul", 12f, t.bad, true).apply {
+                    setPadding(0, dp(6), 0, dp(2))
+                    setOnClickListener { GroupStore.clearMeet(this@MainActivity); drawMeet(); showGroup() }
+                }, 6)
+            }
+            r.add(mc, 10)
+
+            r.add(btn("Keluar dari grup", t.surface, 16) {
+                confirm("Keluar dari grup ini? Daftar teman dan titik kumpul ikut terhapus.", "Keluar") {
+                    GroupStore.leave(this); showGroup()
+                }
+            }, 10, 0f, dp(48))
+        }
+
+        val note = card(t.surface, 12, 16)
+        note.addView(tv("Catatan: grup di versi ini hanya tersimpan di HP. Teman bergabung dengan kode yang sama, " +
+            "tetapi posisi mereka secara langsung belum tampil karena butuh server dan aplikasi teman yang terhubung. " +
+            "Gunakan tombol Bagikan untuk mengirim posisi dan titik kumpul lewat WhatsApp.", 12f, t.muted))
+        r.add(note, 10)
+        show(3, r)
+        startIdleGps()
+    }
+
+    // ---------- Cadangan riwayat dan pengaturan baterai ----------
+
+    private val reqImport = 4711
+    private val reqPhoto = 4712
+    private val reqGpx = 4713
+    private val reqRouteGpx = 4714
+
+    private fun exportHistory() {
+        val list = rawRecords()
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Belum ada riwayat untuk dicadangkan.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+        FileOut.saveAndShare(this, "Delaas_riwayat_$stamp.txt", "text/plain",
+            list.joinToString("\n"), "Cadangkan riwayat")
+    }
+
+    /** Riwayat sebagai tabel CSV: satu baris per aktivitas, angka memakai titik desimal supaya terbaca di Excel/Sheets. */
+    private fun exportCsv() {
+        val recs = rawRecords().mapNotNull { parse(it) }
+        if (recs.isEmpty()) {
+            Toast.makeText(this, "Belum ada riwayat untuk diekspor.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sb = StringBuilder("tanggal,aktivitas,jarak_km,durasi_detik,kecepatan_rata2_kmh,kecepatan_maks_kmh,kalori,tanjakan_m,langkah\n")
+        for (rc in recs) {
+            sb.append(rc.date).append(',')
+                .append(rc.mode).append(',')
+                .append(String.format(Locale.US, "%.3f", rc.km)).append(',')
+                .append(rc.elapsed / 1000L).append(',')
+                .append(rc.avg).append(',')
+                .append(rc.maxSpeed).append(',')
+                .append(rc.kcal).append(',')
+                .append(rc.climb).append(',')
+                .append(if (rc.mode == "Jalan") rc.steps.toString() else "")
+                .append('\n')
+        }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+        FileOut.saveAndShare(this, "Delaas_riwayat_$stamp.csv", "text/csv", sb.toString(), "Ekspor CSV")
+    }
+
+    private fun importGpxPick() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqGpx)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih file.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Baca dan urai GPX di thread latar belakang (file bisa besar), lalu tanya jenis aktivitasnya. */
+    private fun handleGpxImport(uri: Uri) {
+        Thread {
+            val parsed = try {
+                val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                GpxImport.parse(text)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                if (parsed == null) {
+                    Toast.makeText(this, getString(R.string.import_gpx_fail), Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(getString(R.string.import_gpx_pick_mode))
+                    .setItems(modes.toTypedArray()) { _, which -> saveImported(parsed, modes[which]) }
+                    .setNegativeButton("Batal", null)
+                    .show()
+            }
+        }.start()
+    }
+
+    private fun saveImported(p: GpxImport.Result, m: String) {
+        val line = GpxImport.recordLine(p, m, Themes.target(this, m).toString())
+        TrackStore.save(this, TrackStore.key(p.date, p.elapsedMs), p.points)
+        val added = store.addNew(listOf(line))
+        Toast.makeText(this,
+            if (added > 0) getString(R.string.import_gpx_ok, Fmt.dec(p.km, 2)) else getString(R.string.import_gpx_dupe),
+            Toast.LENGTH_LONG).show()
+        showSettings()
+    }
+
+    private fun importHistoryPick() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqImport)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih file.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reqPhoto && resultCode == RESULT_OK) {
+            val picked = data?.data ?: return
+            if (ProfileStore.savePhoto(this, picked)) {
+                showProfile()
+            } else {
+                Toast.makeText(this, "Foto tidak bisa dibaca.", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        if (requestCode == reqGpx && resultCode == RESULT_OK) {
+            val picked = data?.data ?: return
+            handleGpxImport(picked)
+            return
+        }
+        if (requestCode == reqRouteGpx && resultCode == RESULT_OK) {
+            val picked = data?.data ?: return
+            handleRouteGpx(picked)
+            return
+        }
+        if (requestCode != reqImport || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+            val candidates = ArrayList<String>()
+            for (line in text.lines()) {
+                val l = line.trim()
+                if (l.isEmpty() || parse(l) == null) continue
+                candidates.add(l)
+            }
+            val added = store.addNew(candidates)
+            Toast.makeText(this,
+                if (added > 0) "$added aktivitas dipulihkan" else "Tidak ada aktivitas baru di file itu",
+                Toast.LENGTH_LONG).show()
+            showSettings()
+        } catch (e: Exception) {
+            Toast.makeText(this, "File tidak bisa dibaca.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun batteryIgnored(): Boolean = try {
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        Build.VERSION.SDK_INT < 23 || pm.isIgnoringBatteryOptimizations(packageName)
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun openBatterySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+            } catch (e2: Exception) {
+                Toast.makeText(this, "Buka Pengaturan > Baterai secara manual.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        when {
+            running -> moveTaskToBack(true)
+            routeDetail -> showRoutes()
+            inDetail -> showHistory()
+            profileSub -> showProfile()
+            currentTab == -1 && mulaiScreen -> showHome()
+            currentTab > 0 -> showHome()
+            else -> super.onBackPressed()
+        }
+    }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        try {
-            locationManager.removeUpdates(gpsListener)
-        } catch (e: Exception) {
-        }
-
-        mapView.stopLoading()
-        mapView.destroy()
-
+        stopIdleGps()
+        trackMap?.release(); trackMap = null; chartMap?.release(); chartMap = null
+        groupMap?.release(); groupMap = null
         super.onDestroy()
     }
+    companion object {
+        private const val REQUEST_CAMERA_FLASH = 904
+        private val FLASH_INTERVALS = listOf(10, 15, 20, 30, 45, 60, 90, 120, 180, 300)
+        private fun fmtFlashInterval(sec: Int) =
+            if (sec >= 60 && sec % 60 == 0) "${sec / 60} menit" else "$sec detik"
+    }
+
 }
