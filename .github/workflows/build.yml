@@ -1,4 +1,4 @@
-name: Build RideTrack Pro APK
+name: Build Delaas APK
 
 on:
   workflow_dispatch:
@@ -95,7 +95,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: RideTrack-Pro-APK-debug
+          name: Delaas-APK-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
@@ -104,7 +104,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: RideTrack-Pro-APK-release
+          name: Delaas-APK-release
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: ignore
           retention-days: 7
@@ -113,7 +113,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: RideTrack-Pro-AAB
+          name: Delaas-AAB
           path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: ignore
           retention-days: 7
