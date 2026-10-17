@@ -56,7 +56,7 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         val w = MeasureSpec.getSize(widthSpec)
         // Digital murni memakai lebar penuh; analog butuh ruang ekstra di bawah untuk angka kecepatan.
-        val k = if (pure) 0.53f else if (!digital) 0.86f else 0.8f
+        val k = if (pure) 0.53f else if (!digital) 0.88f else 0.8f
         val eff = if (pure) 1f else scale
         setMeasuredDimension(w, (w * k * eff).toInt())
     }
@@ -334,12 +334,12 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
             p.textAlign = Paint.Align.CENTER
             p.color = accent
             p.typeface = Typeface.DEFAULT_BOLD
-            p.textSize = if (compact) 54f else 46f
-            c.drawText(Fmt.dec(speed, 1), 150f, 252f, p)
+            p.textSize = if (compact) 50f else 46f
+            c.drawText(Fmt.dec(speed, 1), 150f, if (compact) 246f else 252f, p)
             p.typeface = Typeface.DEFAULT
             p.color = t.muted
-            p.textSize = if (compact) 18f else 14f
-            c.drawText("km/jam", 150f, if (compact) 274f else 272f, p)
+            p.textSize = if (compact) 17f else 14f
+            c.drawText("km/jam", 150f, if (compact) 266f else 272f, p)
             c.restore()
             return
         }
