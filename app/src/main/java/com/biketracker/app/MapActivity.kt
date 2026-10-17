@@ -567,7 +567,7 @@ class MapActivity : Activity() {
     private var planBar: LinearLayout? = null
     private var pendingPlan: List<String>? = null
 
-    private fun planProfile() = if (mode == "Sepeda") "bike" else "foot"
+    private fun planProfile() = if (mode == "Sepeda" || mode == "Motor") "bike" else "foot"
 
     /** Rencana tersimpan: id|nama|road(0/1)|profil|jarakM|lat,lon;lat,lon */
     private fun loadPlans(): MutableList<List<String>> =
