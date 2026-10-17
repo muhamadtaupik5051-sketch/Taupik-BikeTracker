@@ -63,10 +63,12 @@ jobs:
         run: echo "VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
 
       # Pemeriksaan kualitas: hasilnya dilaporkan, tetapi tidak menggagalkan pembuatan APK.
+      # Unit test WAJIB lulus: kalau ada yang gagal, build berhenti dan APK tidak dibuat.
+      # (Laporan tetap diunggah di artifact laporan-lint-test.)
       - name: Unit test
-        continue-on-error: true
         run: gradle testDebugUnitTest --console=plain
 
+      # Lint hanya dilaporkan (ada temuan lama), tidak menggagalkan build.
       - name: Lint
         continue-on-error: true
         run: gradle lintDebug --console=plain
