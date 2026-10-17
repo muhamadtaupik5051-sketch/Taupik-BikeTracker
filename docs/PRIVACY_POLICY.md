@@ -1,8 +1,8 @@
-# Kebijakan Privasi — RideTrack Pro
+# Kebijakan Privasi — Delaas
 
 Terakhir diperbarui: 16 Oktober 2026
 
-RideTrack Pro adalah aplikasi pelacak aktivitas (bersepeda, lari, jalan). Dokumen ini menjelaskan data apa yang diproses aplikasi.
+Delaas adalah aplikasi pelacak aktivitas (bersepeda, lari, jalan). Dokumen ini menjelaskan data apa yang diproses aplikasi.
 
 ## Data yang diproses
 - **Lokasi presisi (GPS)** — dipakai untuk menghitung jarak, kecepatan, rute, dan tanjakan saat Anda merekam aktivitas. Lokasi hanya dibaca saat Anda menekan Mulai (dan saat layar Mulai terbuka untuk menampilkan posisi). Aplikasi tidak melacak Anda di luar sesi rekaman.
