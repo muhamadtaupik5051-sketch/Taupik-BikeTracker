@@ -675,8 +675,17 @@ class MapActivity : Activity() {
                     .setNegativeButton("Tutup", null)
                     .show()
             }
+            .setNeutralButton("Daftar lengkap") { _, _ -> goRoutes() }
             .setNegativeButton("Tutup", null)
             .show()
+    }
+
+    private fun goRoutes() {
+        val i = android.content.Intent(this, MainActivity::class.java)
+        i.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        i.putExtra("routes", true)
+        startActivity(i)
+        finish()
     }
 
     private fun longPressDialog(lat: Double, lon: Double) {
@@ -877,11 +886,13 @@ class MapActivity : Activity() {
                 val name = et.text.toString().replace("|", " ").replace("\n", " ").trim().ifEmpty { "Rute" }
                 val wps = planWps.joinToString(";") { String.format(Locale.US, "%.6f,%.6f", it[0], it[1]) }
                 val list = loadPlans()
+                val newId = System.currentTimeMillis().toString()
                 list.add(0, listOf(
-                    System.currentTimeMillis().toString(), name, if (planRoad) "1" else "0",
+                    newId, name, if (planRoad) "1" else "0",
                     planProfile(), planDist.toInt().toString(), wps, if (planLoop) "1" else "0", planGeo
                 ))
                 savePlans(list.take(20))
+                SavedRoutes.setMode(this, newId, mode)
                 Toast.makeText(this, "Rencana \"$name\" disimpan", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Batal", null)
