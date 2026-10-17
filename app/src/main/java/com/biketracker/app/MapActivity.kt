@@ -292,6 +292,7 @@ class MapActivity : Activity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             MapHtml.applyCache(this)
+            MapHtml.harden(this)
             addJavascriptInterface(Bridge(), "Bridge")
             webViewClient = MapHtml.client(this@MapActivity)
             // Geser di dalam peta menggeser peta; geser dari tepi kiri/kanan pindah ke halaman Survei.
@@ -511,7 +512,8 @@ class MapActivity : Activity() {
         try {
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, gpsListener)
             ownGps = true
-            if (mapFree()) statusText.text = "GPS aktif • Menunggu sinyal..."
+            val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            if (mapFree()) statusText.text = if (gpsEnabled) "GPS aktif • Menunggu sinyal..." else getString(R.string.map_gps_off)
         } catch (e: Exception) {
             if (mapFree()) statusText.text = "GPS tidak tersedia. Periksa lokasi HP."
         }
