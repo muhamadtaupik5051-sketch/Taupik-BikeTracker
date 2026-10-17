@@ -758,6 +758,9 @@ class MainActivity : Activity() {
         }
         wc.add(tv(msg, 12f, if (hit > 0) t.good else t.muted, hit > 0), 10)
         r.add(wc, 10)
+        if (!running) {
+            r.add(btn("Mulai aktivitas  →", a, 24) { showMulai() }, 10, 0f, dp(48))
+        }
 
         val totalKm = recs.sumOf { it.km.toDouble() }.toFloat()
         val totalMs = recs.sumOf { it.elapsed }
