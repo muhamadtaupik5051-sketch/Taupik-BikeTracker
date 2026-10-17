@@ -56,6 +56,10 @@ class MainActivity : Activity() {
     private var splashDone = false
     private var trackPage = 0
     private var mulaiScreen = false
+    private var routeFilter = "Semua"
+    private var routeQuery = ""
+    private var routeDetail = false
+    private var routesRefill: () -> Unit = {}
     /** Status jeda yang sedang tampil di layar; dipakai untuk menyegarkan layar kalau berubah dari notifikasi. */
     private var shownPaused = false
     private var goTrackPage: (Int) -> Unit = {}
@@ -136,6 +140,11 @@ class MainActivity : Activity() {
         if (intent?.getBooleanExtra("finish", false) == true) {
             intent?.removeExtra("finish")
             if (running) finishTracking()
+            return
+        }
+        if (intent?.getBooleanExtra("routes", false) == true) {
+            intent?.removeExtra("routes")
+            showRoutes()
             return
         }
         when (intent?.getIntExtra("tab", -1) ?: -1) {
@@ -288,6 +297,7 @@ class MainActivity : Activity() {
         currentTab = tab
         profileSub = sub
         inDetail = false
+        routeDetail = false
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(t.bg)
@@ -1774,6 +1784,9 @@ class MainActivity : Activity() {
                     GpxExport.build(rec.mode + " " + rec.date, pts), "Ekspor GPX")
             }, 10, 0f, dp(50))
         }
+        if (rec.route.size >= 2) {
+            r.add(btn("🧭   SIMPAN SEBAGAI RUTE", t.surface) { saveRecAsRoute(rec) }, 10, 0f, dp(50))
+        }
         r.add(btn("▤   KEMBALI KE RIWAYAT", t.surface) { showHistory() }, 10, 0f, dp(50))
         r.add(btn("Hapus perjalanan ini", t.bad) {
             confirm("Hapus perjalanan ini?") {
@@ -1785,6 +1798,378 @@ class MainActivity : Activity() {
 
         show(4, r, true)
         inDetail = true
+    }
+
+    // ---------- Rute tersimpan ----------
+
+    private fun etaText(min: Int): String =
+        if (min >= 60) "${min / 60} j ${min % 60} mnt" else "$min mnt"
+
+    private fun routeInfo(rt: SavedRoute): String {
+        val climb = if (rt.climb >= 0) "${rt.climb} m naik • " else ""
+        return Fmt.dec(rt.km, 1) + " km • " + climb + etaText(rt.etaMin())
+    }
+
+    private fun followText(rt: SavedRoute): String =
+        if (rt.count == 0) "belum diikuti" else "diikuti ${rt.count}×"
+
+    private fun lastText(ms: Long): String {
+        if (ms <= 0L) return "Belum pernah"
+        val days = ((System.currentTimeMillis() - ms) / 86400000L).toInt()
+        return when {
+            days <= 0 -> "Hari ini"
+            days == 1 -> "Kemarin"
+            else -> "$days hari lalu"
+        }
+    }
+
+    private fun routesEmpty(noRoutes: Boolean): LinearLayout {
+        val c = card(t.surface, 18, 16)
+        c.addView(tv(if (noRoutes) "Belum ada rute tersimpan" else "Tidak ada rute yang cocok", 15f, t.text, true))
+        c.add(tv(
+            if (noRoutes) "Buat rute di peta, impor dari file GPX, atau simpan dari riwayat aktivitasmu."
+            else "Coba kata kunci atau filter lain.",
+            12f, t.muted
+        ), 4)
+        if (noRoutes) c.add(btn("Tambah rute", t.accent, 22) { addRouteSheet() }, 12, 0f, dp(46))
+        return c
+    }
+
+    private fun routeCard(rt: SavedRoute): LinearLayout {
+        val a = acc(rt.mode)
+        val c = card(t.surface, 10, 14).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { showRouteDetail(rt.id) }
+        }
+        c.addView(RouteView(this, t, true).apply { points = rt.points; accent = a }, LinearLayout.LayoutParams(dp(60), dp(60)))
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mid.addView(tv(rt.name, 14f, t.text, true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        mid.add(tv(routeInfo(rt), 12f, t.muted), 2)
+        mid.add(tv(icon(rt.mode) + " " + rt.mode + " • " + followText(rt), 12f, a), 4)
+        c.addView(mid, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
+        val side = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+        }
+        side.addView(tv(if (rt.fav) "★" else "☆", 20f, if (rt.fav) t.accent else t.muted, true).apply {
+            contentDescription = "Favorit"
+            setPadding(dp(8), 0, 0, dp(4))
+            setOnClickListener {
+                SavedRoutes.toggleFav(this@MainActivity, rt.id)
+                routesRefill()
+            }
+        })
+        side.addView(tv("Ikuti", 12f, t.accent, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(t.surface)
+                setStroke(dp(1), t.accent)
+            }
+            setOnClickListener { followRoute(rt) }
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        c.addView(side, LinearLayout.LayoutParams(-2, -2))
+        return c
+    }
+
+    /** Daftar rute tersimpan: cari, saring per aktivitas atau favorit, lalu ketuk untuk detail. */
+    private fun showRoutes() {
+        val r = column()
+        backToProfile(r)
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val ttl = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ttl.addView(tv("RUTE", 11f, t.accent, true))
+        ttl.add(tv("Rute tersimpan", 24f, t.text, true), 2)
+        head.addView(ttl, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(tv("+", 24f, onColor(t.accent), true).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Tambah rute"
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(t.accent) }
+            setOnClickListener { addRouteSheet() }
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        r.add(head, 4)
+
+        val search = EditText(this).apply {
+            hint = "Cari rute"
+            setText(routeQuery)
+            setSingleLine(true)
+            textSize = 14f
+            setTextColor(t.text)
+            setHintTextColor(t.muted)
+            setPadding(dp(14), 0, dp(14), 0)
+            background = box(t.surface, 12, true)
+        }
+        r.add(search, 12, 0f, dp(42))
+
+        val summary = tv("", 12f, t.muted)
+        val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val chipViews = ArrayList<Pair<String, TextView>>()
+
+        fun restyle() {
+            for (pr in chipViews) {
+                val on = pr.first == routeFilter
+                pr.second.setTextColor(if (on) onColor(t.accent) else t.text)
+                pr.second.background = box(if (on) t.accent else t.surface, 20, !on)
+            }
+        }
+
+        fun refill() {
+            listBox.removeAllViews()
+            val everything = SavedRoutes.all(this)
+            val q = routeQuery.trim().lowercase(Locale.getDefault())
+            val items = everything.filter { rt ->
+                val okF = routeFilter == "Semua" || (routeFilter == "Favorit" && rt.fav) || rt.mode == routeFilter
+                val okQ = q.isEmpty() || rt.name.lowercase(Locale.getDefault()).contains(q)
+                okF && okQ
+            }
+            summary.text = if (items.isEmpty()) "" else "${items.size} rute • ${Fmt.dec(items.sumOf { it.km }, 1)} km total"
+            if (items.isEmpty()) {
+                listBox.add(routesEmpty(everything.isEmpty()), 8)
+            } else {
+                for (rt in items) listBox.add(routeCard(rt), 8)
+            }
+        }
+        routesRefill = { refill() }
+
+        val chipRow = LinearLayout(this)
+        for (name in listOf("Semua", "Sepeda", "Motor", "Lari", "Jalan", "Favorit")) {
+            val chip = tv(name, 12f, t.text, true).apply {
+                setPadding(dp(14), dp(7), dp(14), dp(7))
+                setOnClickListener {
+                    routeFilter = name
+                    restyle()
+                    refill()
+                }
+            }
+            chipViews.add(Pair(name, chip))
+            chipRow.addView(chip, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) })
+        }
+        restyle()
+        val chipScroll = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(chipRow)
+        }
+        r.add(chipScroll, 10)
+        r.add(summary, 10)
+        r.add(listBox, 2)
+
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                routeQuery = s?.toString() ?: ""
+                refill()
+            }
+        })
+        refill()
+        show(4, r, true)
+    }
+
+    private fun showRouteDetail(id: String) {
+        val rt = SavedRoutes.find(this, id)
+        if (rt == null) {
+            showRoutes()
+            return
+        }
+        val a = acc(rt.mode)
+        val r = column()
+        r.add(tv("‹  Rute tersimpan", 13f, t.accent, true).apply {
+            setPadding(0, 0, dp(16), dp(8))
+            setOnClickListener { showRoutes() }
+        })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val ttl = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ttl.addView(tv(icon(rt.mode) + "  " + rt.mode.uppercase(Locale.getDefault()), 11f, a, true))
+        ttl.add(tv(rt.name, 22f, t.text, true), 2)
+        head.addView(ttl, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(tv(if (rt.fav) "★" else "☆", 26f, if (rt.fav) t.accent else t.muted, true).apply {
+            contentDescription = "Favorit"
+            setPadding(dp(12), dp(4), 0, dp(4))
+            setOnClickListener {
+                SavedRoutes.toggleFav(this@MainActivity, rt.id)
+                showRouteDetail(rt.id)
+            }
+        })
+        r.add(head, 2)
+
+        r.add(RouteView(this, t).apply {
+            points = rt.points; hint = "Rute kosong"; accent = a
+        }, 12, 0f, dp(170))
+
+        statRow(r, statCard("Jarak", Fmt.dec(rt.km, 2) + " km", a),
+            statCard("Tanjakan", if (rt.climb >= 0) "${rt.climb} m" else "–"), 10)
+        statRow(r, statCard("Perkiraan waktu", etaText(rt.etaMin())),
+            statCard("Terakhir diikuti", lastText(rt.last)), 8)
+
+        if (rt.alts.size >= 2) {
+            val pc = card(t.surface, 14, 16)
+            pc.addView(tv("Profil tinggi", 13f, t.muted))
+            pc.add(ProfileView(this, t).apply { values = rt.alts; accent = a }, 6, 0f, dp(90))
+            r.add(pc, 10)
+        }
+
+        val active = SavedRoutes.activeId(this) == rt.id
+        r.add(btn(if (active) "✓   DIPAKAI SEBAGAI PANDUAN" else "➤   IKUTI RUTE", a, 28) { followRoute(rt) }, 14, 0f, dp(54))
+        val row = LinearLayout(this)
+        row.addView(btn("⇩  Ekspor GPX", t.surface) { exportRoute(rt) }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        row.addView(btn("✎  Ganti nama", t.surface) {
+            askText("Ganti nama", "Nama rute", rt.name) { typed ->
+                SavedRoutes.rename(this, rt.id, typed)
+                showRouteDetail(rt.id)
+            }
+        }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
+        r.add(row, 10)
+        if (active) {
+            r.add(btn("Matikan panduan", t.surface) {
+                SavedRoutes.clearActive(this)
+                showRouteDetail(rt.id)
+            }, 10, 0f, dp(46))
+        }
+        r.add(btn("Hapus rute", t.bad) {
+            confirm("Hapus rute ini?") {
+                SavedRoutes.delete(this, rt.id)
+                showRoutes()
+            }
+        }, 10, 0f, dp(46))
+
+        show(4, r, true)
+        routeDetail = true
+    }
+
+    /** Pakai rute sebagai garis panduan, lalu buka layar Mulai (kalau belum merekam). */
+    private fun followRoute(rt: SavedRoute) {
+        SavedRoutes.activate(this, rt.id)
+        if (running) {
+            TrackerState.loadGuide(this)
+            Toast.makeText(this, "Rute \"" + rt.name + "\" dipakai sebagai panduan.", Toast.LENGTH_LONG).show()
+            return
+        }
+        mode = rt.mode
+        Toast.makeText(this, "Rute \"" + rt.name + "\" jadi garis panduan. Tekan Mulai untuk merekam.", Toast.LENGTH_LONG).show()
+        showMulai()
+    }
+
+    private fun exportRoute(rt: SavedRoute) {
+        val stamp = rt.id.toLongOrNull()?.let { SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date(it)) } ?: rt.id
+        FileOut.saveAndShare(this, GpxExport.fileName("Rute", rt.name + "_" + stamp), "application/gpx+xml",
+            GpxExport.build(rt.name, rt.points), "Ekspor GPX")
+    }
+
+    private fun addRouteSheet() {
+        val items = arrayOf("Buat rute di peta", "Impor dari file GPX", "Simpan dari riwayat aktivitas")
+        AlertDialog.Builder(this).setTitle("Tambah rute")
+            .setItems(items) { _, i ->
+                when (i) {
+                    0 -> {
+                        Toast.makeText(this, "Ketuk peta untuk menambah titik, lalu tekan Simpan rute.", Toast.LENGTH_LONG).show()
+                        openMap()
+                    }
+                    1 -> routeGpxPick()
+                    else -> pickHistoryForRoute()
+                }
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun pickHistoryForRoute() {
+        val recs = rawRecords().mapNotNull { parse(it) }.filter { it.route.size >= 2 }.take(30)
+        if (recs.isEmpty()) {
+            Toast.makeText(this, "Belum ada aktivitas dengan rute di riwayat.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val names = recs.map { icon(it.mode) + " " + it.date + " • " + Fmt.dec(it.km, 1) + " km" }
+        AlertDialog.Builder(this).setTitle("Pilih aktivitas")
+            .setItems(names.toTypedArray()) { _, which -> saveRecAsRoute(recs[which]) { showRoutes() } }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun saveRecAsRoute(rec: Rec, after: () -> Unit = {}) {
+        val def = rec.mode + " " + rec.date
+        askText("Simpan sebagai rute", "Nama rute", def) { typed ->
+            val full = TrackStore.load(this, TrackStore.key(rec.date, rec.elapsed))
+            val pts = if (full.size >= 2) full else rec.route
+            val id = SavedRoutes.addFromPoints(
+                this, typed.ifEmpty { def }, rec.mode, pts, rec.km.toDouble(), rec.climb.toIntOrNull() ?: -1
+            )
+            if (id == null) {
+                Toast.makeText(this, "Rute terlalu pendek untuk disimpan.", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Rute disimpan di Rute tersimpan", Toast.LENGTH_SHORT).show()
+                after()
+            }
+        }
+    }
+
+    private fun routeGpxPick() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, reqRouteGpx)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Tidak bisa membuka pemilih file.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Baca GPX di thread latar belakang, tanya jenis aktivitas dan nama, lalu simpan sebagai rute. */
+    private fun handleRouteGpx(uri: Uri) {
+        Thread {
+            val pts = try {
+                val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                GpxImport.parsePoints(text)
+            } catch (e: Exception) {
+                emptyList<DoubleArray>()
+            }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                if (pts.size < 2) {
+                    Toast.makeText(this, getString(R.string.import_gpx_fail), Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                var meters = 0.0
+                for (i in 1 until pts.size) meters += GpxImport.meters(pts[i - 1], pts[i])
+                var climb = 0.0
+                var ref = Double.NaN
+                var hasEle = false
+                for (p in pts) {
+                    val e = p[2]
+                    if (e.isNaN()) continue
+                    hasEle = true
+                    if (ref.isNaN()) {
+                        ref = e
+                    } else if (e - ref >= 3.0) {
+                        climb += e - ref
+                        ref = e
+                    } else if (ref - e >= 3.0) {
+                        ref = e
+                    }
+                }
+                val climbM = if (hasEle) Math.round(climb).toInt() else -1
+                AlertDialog.Builder(this)
+                    .setTitle(getString(R.string.import_gpx_pick_mode))
+                    .setItems(modes.toTypedArray()) { _, which ->
+                        val m = modes[which]
+                        askText("Nama rute", "Nama rute", m + " GPX") { typed ->
+                            val id = SavedRoutes.addFromPoints(
+                                this, typed.ifEmpty { m + " GPX" }, m, pts, meters / 1000.0, climbM
+                            )
+                            Toast.makeText(this, if (id == null) "Rute terlalu pendek." else "Rute disimpan", Toast.LENGTH_SHORT).show()
+                            showRoutes()
+                        }
+                    }
+                    .setNegativeButton("Batal", null)
+                    .show()
+            }
+        }.start()
     }
 
     private fun showSettings() {
@@ -1989,7 +2374,9 @@ class MainActivity : Activity() {
         cell("Total durasi", Fmt.hm(recs.sumOf { it.elapsed }), t.text)
         r.add(sc, 10)
 
+        val routeN = SavedRoutes.all(this).size
         r.add(profileRow("▤", "Riwayat", if (recs.isEmpty()) "Belum ada perjalanan" else "${recs.size} perjalanan tersimpan") { showHistory() }, 12)
+        r.add(profileRow("🧭", "Rute tersimpan", if (routeN == 0) "Belum ada rute" else "$routeN rute tersimpan") { showRoutes() }, 8)
         r.add(profileRow("🎨", "Tema", Themes.current(this).name) { showTheme() }, 8)
         r.add(profileRow("⚙", "Atur", "Target, berat badan, peringatan, cadangan") { showSettings() }, 8)
 
@@ -2177,6 +2564,7 @@ class MainActivity : Activity() {
     private val reqImport = 4711
     private val reqPhoto = 4712
     private val reqGpx = 4713
+    private val reqRouteGpx = 4714
 
     private fun exportHistory() {
         val list = rawRecords()
@@ -2290,6 +2678,11 @@ class MainActivity : Activity() {
             handleGpxImport(picked)
             return
         }
+        if (requestCode == reqRouteGpx && resultCode == RESULT_OK) {
+            val picked = data?.data ?: return
+            handleRouteGpx(picked)
+            return
+        }
         if (requestCode != reqImport || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         try {
@@ -2333,6 +2726,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when {
             running -> moveTaskToBack(true)
+            routeDetail -> showRoutes()
             inDetail -> showHistory()
             profileSub -> showProfile()
             currentTab == -1 && mulaiScreen -> showHome()
