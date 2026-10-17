@@ -34,23 +34,31 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
     var maxSpeed = 0f
     var scaleMax = 60f
     var digital = false
+        set(v) { if (field != v) { field = v; requestLayout() } }
     /** Digital murni: hanya angka besar, tanpa busur dan skala analog. */
     var pure = false
+        set(v) { if (field != v) { field = v; requestLayout() } }
     var accent: Int = t.accent
     var scale = GAUGE_SCALE
+    /** Versi kecil (halaman Rute): tanpa angka skala dan tick kecil, angka kecepatan lebih besar. */
+    var compact = false
 
     private val ev = ArgbEvaluator()
     private val stops = intArrayOf(
-        0xFF27E35A.toInt(), 0xFFE6D93A.toInt(), 0xFFFF8A1F.toInt(), 0xFFFF2A2A.toInt()
+        0xFF1FEF3F.toInt(), 0xFFF4E81C.toInt(), 0xFFFF8E0A.toInt(), 0xFFFF1F1F.toInt()
     )
-    private val at = floatArrayOf(0f, 0.4f, 0.7f, 1f)
+    private val at = floatArrayOf(0f, 0.5f, 0.75f, 1f)
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()
     private val rect = RectF(150f - 122f, 150f - 122f, 150f + 122f, 150f + 122f)
+    private val ringRect = RectF(150f - 134f, 150f - 134f, 150f + 134f, 150f + 134f)
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         val w = MeasureSpec.getSize(widthSpec)
-        setMeasuredDimension(w, (w * 0.8f * scale).toInt())
+        // Digital murni memakai lebar penuh; analog butuh ruang ekstra di bawah untuk angka kecepatan.
+        val k = if (pure) 0.53f else if (!digital) 0.86f else 0.8f
+        val eff = if (pure) 1f else scale
+        setMeasuredDimension(w, (w * k * eff).toInt())
     }
 
     private fun mix(a: Int, b: Int, k: Float): Int = ev.evaluate(k, a, b) as Int
@@ -70,65 +78,218 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
         if (abs(v - v.roundToInt()) < 0.01f) v.roundToInt().toString()
         else String.format(Locale.US, "%.1f", v)
 
+    private val segMap = mapOf(
+        '0' to "abcdef", '1' to "bc", '2' to "abdeg", '3' to "abcdg", '4' to "bcfg",
+        '5' to "acdfg", '6' to "acdefg", '7' to "abc", '8' to "abcdefg", '9' to "abcdfg"
+    )
+
+    private fun alpha(col: Int, a: Int) = (col and 0x00FFFFFF) or (a shl 24)
+
+    /** Isi [path] dengan satu segmen (a..g) dari angka 7-segmen berukuran w x h. */
+    private fun segPath(seg: Char, w: Float, h: Float, th: Float, g: Float) {
+        val hh = th / 2f
+        path.reset()
+        if (seg == 'a' || seg == 'd' || seg == 'g') {
+            val cy = when (seg) { 'a' -> hh; 'd' -> h - hh; else -> h / 2f }
+            val xs = hh + g
+            val xe = w - hh - g
+            path.moveTo(xs, cy); path.lineTo(xs + hh, cy - hh); path.lineTo(xe - hh, cy - hh)
+            path.lineTo(xe, cy); path.lineTo(xe - hh, cy + hh); path.lineTo(xs + hh, cy + hh)
+        } else {
+            val cx = if (seg == 'b' || seg == 'c') w - hh else hh
+            val upper = seg == 'b' || seg == 'f'
+            val ys = (if (upper) hh else h / 2f) + g
+            val ye = (if (upper) h / 2f else h - hh) - g
+            path.moveTo(cx, ys); path.lineTo(cx + hh, ys + hh); path.lineTo(cx + hh, ye - hh)
+            path.lineTo(cx, ye); path.lineTo(cx - hh, ye - hh); path.lineTo(cx - hh, ys + hh)
+        }
+        path.close()
+    }
+
+    private fun commaPath(x: Float, h: Float) {
+        path.reset()
+        path.moveTo(x + 10f, h - 12f); path.lineTo(x + 18f, h - 12f); path.lineTo(x + 15f, h - 2f)
+        path.lineTo(x + 8f, h + 9f); path.lineTo(x + 4f, h + 9f); path.lineTo(x + 9f, h - 2f)
+        path.close()
+    }
+
+    private fun poly(vararg v: Float) {
+        path.reset()
+        path.moveTo(v[0], v[1])
+        var i = 2
+        while (i < v.size) { path.lineTo(v[i], v[i + 1]); i += 2 }
+        path.close()
+    }
+
+    /** Digital murni: panel neon, ikon pesepeda, angka 7-segmen miring, plat KM/JAM. */
     private fun drawPure(c: Canvas) {
+        val glow = accent
+        val bright = mix(accent, 0xFFFFFFFF.toInt(), 0.35f)
+
+        // Badan panel
+        p.style = Paint.Style.FILL
+        p.color = 0xFF04101E.toInt()
+        poly(34f, 6f, 262f, 6f, 294f, 30f, 294f, 96f, 268f, 118f, 40f, 118f, 6f, 92f, 6f, 34f)
+        c.drawPath(path, p)
+        p.style = Paint.Style.STROKE
+        p.strokeJoin = Paint.Join.ROUND
+        p.strokeWidth = 9f; p.color = alpha(glow, 34); c.drawPath(path, p)
+        p.strokeWidth = 5f; p.color = alpha(glow, 80); c.drawPath(path, p)
+        p.strokeWidth = 2.2f; p.color = bright; c.drawPath(path, p)
+        poly(38f, 14f, 259f, 14f, 286f, 34f, 286f, 92f, 265f, 110f, 43f, 110f, 14f, 88f, 14f, 38f)
+        p.strokeWidth = 1f; p.color = alpha(glow, 110); c.drawPath(path, p)
+
+        // Garis miring hiasan
+        p.strokeCap = Paint.Cap.BUTT
+        p.strokeWidth = 3.4f
+        p.color = bright
+        for (i in 0..4) c.drawLine(48f + i * 8.5f, 23f, 55f + i * 8.5f, 13f, p)
+        p.color = glow
+        for (i in 0..3) c.drawLine(262f + i * 7f, 108f, 268f + i * 7f, 100f, p)
+        for (i in 0..2) c.drawLine(40f + i * 7f, 108f, 46f + i * 7f, 100f, p)
+
+        // Pesepeda dan garis kecepatan
+        p.strokeCap = Paint.Cap.ROUND
+        p.color = glow
+        val lens = floatArrayOf(18f, 22f, 20f, 16f, 12f)
+        for (i in 0..4) {
+            p.strokeWidth = 1.6f
+            p.alpha = 255 - i * 25
+            val y = 46f + i * 6f
+            c.drawLine(36f - lens[i], y, 36f, y, p)
+        }
+        p.color = glow
+        p.strokeWidth = 2.4f
+        c.drawCircle(48f, 70f, 11f, p)
+        c.drawCircle(75f, 70f, 11f, p)
+        p.strokeWidth = 2f
+        c.drawLine(48f, 70f, 60f, 70f, p)
+        c.drawLine(60f, 70f, 55f, 52f, p)
+        c.drawLine(55f, 52f, 70f, 52f, p)
+        c.drawLine(70f, 52f, 60f, 70f, p)
+        c.drawLine(70f, 52f, 75f, 70f, p)
+        p.strokeWidth = 3.6f
+        c.drawLine(55f, 50f, 66f, 43f, p)
+        c.drawLine(66f, 43f, 77f, 53f, p)
+        c.drawLine(55f, 50f, 63f, 60f, p)
+        c.drawLine(63f, 60f, 60f, 70f, p)
+        p.style = Paint.Style.FILL
+        c.drawCircle(72f, 37.5f, 4.4f, p)
+
+        // Angka 7-segmen (miring). Otomatis mengecil bila angkanya panjang.
+        val str = Fmt.dec(speed, 1)
+        val dw = 44f; val dh = 60f; val th = 9f; val cw = 24f; val gap = 5f
+        var total = 0f
+        for ((i, ch) in str.withIndex()) total += (if (ch == ',' || ch == '.') cw else dw) + (if (i > 0) gap else 0f)
+        val fit = min(1f, 176f / total)
+        c.save()
+        c.translate(190f, 18f + (1f - fit) * dh / 2f)
+        c.scale(fit, fit)
+        c.translate(-total / 2f + dh * 0.08f, 0f)
+        c.skew(-0.16f, 0f)
+        for (pass in 0..3) {
+            var x = 0f
+            for ((i, ch) in str.withIndex()) {
+                if (i > 0) x += gap
+                val isComma = ch == ',' || ch == '.'
+                val segs = if (isComma) "" else (segMap[ch] ?: "")
+                if (pass < 3) {
+                    p.style = Paint.Style.STROKE
+                    p.strokeJoin = Paint.Join.ROUND
+                    p.strokeWidth = if (pass == 0) 7f else if (pass == 1) 4f else 2f
+                    p.color = alpha(glow, if (pass == 0) 40 else if (pass == 1) 95 else 200)
+                } else {
+                    p.style = Paint.Style.FILL
+                    p.color = 0xFFEAF8FF.toInt()
+                }
+                if (isComma) {
+                    commaPath(x, dh); c.drawPath(path, p)
+                } else {
+                    c.save()
+                    c.translate(x, 0f)
+                    for (sg in segs) { segPath(sg, dw, dh, th, 0.9f); c.drawPath(path, p) }
+                    c.restore()
+                }
+                x += if (isComma) cw else dw
+            }
+        }
+        c.restore()
+
+        // Plat KM/JAM
+        p.style = Paint.Style.FILL
+        p.color = 0xFF050E1A.toInt()
+        poly(78f, 102f, 90f, 88f, 212f, 88f, 224f, 102f, 212f, 116f, 90f, 116f)
+        c.drawPath(path, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 4f; p.color = alpha(glow, 60); c.drawPath(path, p)
+        p.strokeWidth = 1.8f; p.color = bright; c.drawPath(path, p)
         p.style = Paint.Style.FILL
         p.textAlign = Paint.Align.CENTER
-        p.color = accent
-        p.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        p.textSize = 86f
-        c.drawText(Fmt.dec(speed, 1), 150f, 158f, p)
+        p.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD_ITALIC)
+        p.textSize = 20f
+        p.color = 0xFFEAF8FF.toInt()
+        c.drawText("KM/JAM", 151f, 109f, p)
+
+        // Kecepatan maksimum
         p.typeface = Typeface.DEFAULT
         p.color = t.muted
-        p.textSize = 16f
-        c.drawText("km/jam", 150f, 190f, p)
         p.textSize = 13f
-        c.drawText("Maks " + Fmt.dec(maxSpeed, 1) + " km/jam", 150f, 222f, p)
+        c.drawText("Maks " + Fmt.dec(maxSpeed, 1) + " km/jam", 150f, 144f, p)
     }
 
     override fun onDraw(c: Canvas) {
-        val s = width * scale / 300f
+        val s = width * (if (pure) 1f else scale) / 300f
         c.save()
         c.translate((width - 300f * s) / 2f, 0f)
         c.scale(s, s)
-        c.translate(0f, -18f)
 
         if (pure) {
             drawPure(c)
             c.restore()
             return
         }
+        c.translate(0f, -18f)
 
+        // Cincin tipis gelap di luar busur
         p.style = Paint.Style.STROKE
         p.strokeCap = Paint.Cap.BUTT
+        p.strokeWidth = 2f
+        p.color = mix(t.surface2, t.bg, 0.3f)
+        c.drawArc(ringRect, 135f, 270f, false, p)
+
         p.strokeWidth = 14f
-        val n = 54
+        val n = 45
         for (i in 0 until n) {
-            val a0 = 135f + i * 5f
-            val mid = (a0 + 2f - 135f) / 270f * scaleMax
+            val a0 = 135f + i * 6f
+            val mid = (a0 + 2.3f - 135f) / 270f * scaleMax
             var col = grad(i / (n - 1f))
-            if (mid > speed) col = mix(col, t.surface2, 0.75f)
+            // Analog: busur selalu penuh warna (penunjuk yang menandai kecepatan). Digital: busur menyala sesuai kecepatan.
+            if (digital && mid > speed) col = mix(col, t.surface2, 0.75f)
             p.color = col
-            c.drawArc(rect, a0, 4f, false, p)
+            c.drawArc(rect, a0 + 0.7f, 4.6f, false, p)
         }
 
         if (!digital) {
             for (k in 0..30) {
                 val a = 135f + 270f * k / 30f
                 val major = k % 5 == 0
-                p.color = if (major) t.text else t.muted
-                p.strokeWidth = if (major) 2.5f else 1.2f
+                if (compact && !major) continue
+                p.color = t.text
+                p.strokeWidth = if (major) (if (compact) 4.6f else 3.2f) else 1.4f
                 val r2 = if (major) 108f else 104f
                 c.drawLine(px(99f, a), py(99f, a), px(r2, a), py(r2, a), p)
             }
-            p.style = Paint.Style.FILL
-            p.textAlign = Paint.Align.CENTER
-            p.textSize = 11f
-            p.color = t.muted
-            p.typeface = Typeface.DEFAULT
-            for (k in 0..6) {
-                val v = k * scaleMax / 6f
-                val a = 135f + 270f * k / 6f
-                c.drawText(lab(v), px(87f, a), py(87f, a) + 4f, p)
+            if (!compact) {
+                p.style = Paint.Style.FILL
+                p.textAlign = Paint.Align.CENTER
+                p.textSize = 12f
+                p.color = t.text
+                p.typeface = Typeface.DEFAULT_BOLD
+                for (k in 0..6) {
+                    val v = k * scaleMax / 6f
+                    val a = 135f + 270f * k / 6f
+                    c.drawText(lab(v), px(86f, a), py(86f, a) + 4.5f, p)
+                }
             }
         }
 
@@ -149,27 +310,50 @@ class GaugeView(ctx: Context, private val t: AppTheme) : View(ctx) {
         c.drawCircle(150f, 150f, 62f, p)
 
         if (!digital) {
+            // Jarum meruncing bergaya speedometer, dengan poros di tengah
             val a = 135f + 270f * min(speed, scaleMax) / scaleMax
+            val w = 7f
             path.reset()
-            path.moveTo(px(82f, a), py(82f, a))
-            path.lineTo(px(72f, a + 5f), py(72f, a + 5f))
-            path.lineTo(px(72f, a - 5f), py(72f, a - 5f))
+            path.moveTo(px(106f, a), py(106f, a))
+            path.lineTo(px(w, a + 90f) + 0f, py(w, a + 90f))
+            path.lineTo(px(14f, a + 180f), py(14f, a + 180f))
+            path.lineTo(px(w, a - 90f), py(w, a - 90f))
             path.close()
             p.style = Paint.Style.FILL
-            p.color = t.text
+            p.color = accent
             c.drawPath(path, p)
+            p.color = t.bg
+            c.drawCircle(150f, 150f, 12f, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 3.5f
+            p.color = accent
+            c.drawCircle(150f, 150f, 12f, p)
+
+            // Angka kecepatan di bawah poros
+            p.style = Paint.Style.FILL
+            p.textAlign = Paint.Align.CENTER
+            p.color = accent
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = if (compact) 54f else 46f
+            c.drawText(Fmt.dec(speed, 1), 150f, 252f, p)
+            p.typeface = Typeface.DEFAULT
+            p.color = t.muted
+            p.textSize = if (compact) 18f else 14f
+            c.drawText("km/jam", 150f, if (compact) 274f else 272f, p)
+            c.restore()
+            return
         }
 
         p.style = Paint.Style.FILL
         p.textAlign = Paint.Align.CENTER
         p.color = accent
         p.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        p.textSize = if (digital) 44f else 34f
-        c.drawText(Fmt.dec(speed, 1), 150f, if (digital) 166f else 160f, p)
+        p.textSize = 44f
+        c.drawText(Fmt.dec(speed, 1), 150f, 166f, p)
         p.typeface = Typeface.DEFAULT
         p.color = t.muted
         p.textSize = 12f
-        c.drawText("km/jam", 150f, if (digital) 188f else 182f, p)
+        c.drawText("km/jam", 150f, 188f, p)
 
         c.restore()
     }
