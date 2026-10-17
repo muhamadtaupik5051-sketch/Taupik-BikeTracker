@@ -34,8 +34,13 @@ class MapPanel(
     private val accent: Int,
     private val compact: Boolean = false,
     private val survey: Boolean = false,
-    private val profile: String = "bike"
+    private val profile: String = "bike",
+    /** Peta polos (dipakai halaman Grup): tanpa legenda Start/Stop, tombol rencana, dan tombol Rute. */
+    private val plain: Boolean = false
 ) : FrameLayout(ctx) {
+
+    /** Dipanggil sekali saat peta siap, supaya penanda bisa dipasang. */
+    var onMapReady: (() -> Unit)? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val d = resources.displayMetrics.density
@@ -74,9 +79,10 @@ class MapPanel(
                 if (survey) {
                     loadActivePlan()
                     loadSavedMarks()
-                } else if (!compact) {
+                } else if (!compact && !plain) {
                     loadActivePlan()
                 }
+                onMapReady?.invoke()
             }
         }
 
@@ -228,11 +234,11 @@ class MapPanel(
         }
         legend.addView(chip(0xFF27D282.toInt(), "Start"))
         legend.addView(chip(0xFFFF3B3B.toInt(), "Stop"), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
-        if (!survey) addView(legend, LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
+        if (!survey && !plain) addView(legend, LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = dp(10); bottomMargin = dp(10)
         })
 
-        if (!survey && !compact) {
+        if (!survey && !compact && !plain) {
             val gb = TextView(context).apply {
                 text = "🧭 Rute"; textSize = 12f; typeface = Typeface.DEFAULT_BOLD
                 setTextColor(0xFF111111.toInt()); gravity = Gravity.CENTER
@@ -573,6 +579,11 @@ class MapPanel(
         if (!ready) return
         val safe = name.replace("'", "").replace("\\", "")
         web.evaluateJavascript(String.format(Locale.US, "addMark(%.6f,%.6f,'%s')", lat, lon, safe), null)
+    }
+
+    /** Hapus semua penanda titik (oranye). */
+    fun clearPoints() {
+        if (ready) web.evaluateJavascript("clearMarks()", null)
     }
 
     /** Pusatkan peta pada satu titik. */
