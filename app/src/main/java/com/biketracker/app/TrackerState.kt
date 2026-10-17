@@ -127,6 +127,7 @@ object TrackerState {
 
     fun speedLimit(): Float = when (mode) {
         "Sepeda" -> 80f
+        "Motor" -> 180f
         "Lari" -> 30f
         else -> 20f
     }
@@ -244,6 +245,7 @@ object TrackerState {
     fun sampleSeconds(): Int = (sampleEveryMs / 1000L).toInt()
 
     fun calories(weightKg: Int): Int {
+        if (mode == "Motor") return 0 // naik motor tidak dihitung sebagai pembakaran kalori
         val h = currentElapsed() / 3600000f
         if (h <= 0f) return 0
         val avg = averageSpeed()
