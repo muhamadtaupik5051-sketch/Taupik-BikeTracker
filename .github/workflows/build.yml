@@ -41,8 +41,8 @@ jobs:
           tar xzf leaflet-1.9.4.tgz -C l
           tar xzf leaflet-rotate-0.2.8.tgz -C r
           cd "$GITHUB_WORKSPACE"
+          # Gambar bawaan Leaflet (marker-icon, layers) tidak dipakai: penanda peta digambar sendiri.
           cp "$RUNNER_TEMP/lf/l/package/dist/leaflet.js" "$RUNNER_TEMP/lf/l/package/dist/leaflet.css" app/src/main/assets/leaflet/
-          cp -r "$RUNNER_TEMP/lf/l/package/dist/images" app/src/main/assets/leaflet/images
           cp "$RUNNER_TEMP/lf/r/package/dist/leaflet-rotate-src.js" app/src/main/assets/leaflet/
           ls -R app/src/main/assets/leaflet
 
