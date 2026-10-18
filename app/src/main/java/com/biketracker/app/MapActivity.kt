@@ -633,7 +633,7 @@ class MapActivity : Activity() {
             (if (p[0] == active) "★ " else "") + p[1] + " · " +
                 Fmt.dec((p[4].toDoubleOrNull() ?: 0.0) / 1000.0, 2) + " km"
         }
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("Rute saya")
             .setItems(names) { _, i ->
                 val p = plans[i]
@@ -644,7 +644,7 @@ class MapActivity : Activity() {
                     "Buka di Google Maps",
                     "Hapus rute"
                 )
-                android.app.AlertDialog.Builder(this)
+                dlg()
                     .setTitle(p[1])
                     .setItems(acts) { _, k ->
                         when (k) {
@@ -690,7 +690,7 @@ class MapActivity : Activity() {
         val la = String.format(Locale.US, "%.6f", lat)
         val lo = String.format(Locale.US, "%.6f", lon)
         val items = arrayOf("🟢 Mulai di sini (A)", "🔴 Jadikan titik akhir (B)", "＋ Tambah ke rute")
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("$la, $lo")
             .setItems(items) { _, i ->
                 if (!pageReady) return@setItems
@@ -711,10 +711,10 @@ class MapActivity : Activity() {
             val tag = if (n > 1 && i == 0) "A" else if (n > 1 && i == n - 1) "B" else (i + 1).toString()
             tag + "   " + String.format(Locale.US, "%.5f, %.5f", planWps[i][0], planWps[i][1])
         }
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("Titik rute")
             .setItems(names) { _, i ->
-                android.app.AlertDialog.Builder(this)
+                dlg()
                     .setTitle(names[i])
                     .setItems(arrayOf("Lihat di peta", "Naik", "Turun", "Hapus titik")) { _, k ->
                         if (!pageReady) return@setItems
@@ -737,7 +737,7 @@ class MapActivity : Activity() {
             hint = "Nama tempat atau jalan"
             setSingleLine()
         }
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("Cari lokasi")
             .setView(et)
             .setPositiveButton("Cari") { _, _ ->
@@ -858,14 +858,20 @@ class MapActivity : Activity() {
         return bar
     }
 
+    /** Dialog mengikuti tema aplikasi (gelap/terang) supaya serasi dengan layar peta. */
+    private fun dlg() = android.app.AlertDialog.Builder(
+        this,
+        if (t.dark) android.R.style.Theme_Material_Dialog_Alert else android.R.style.Theme_Material_Light_Dialog_Alert
+    )
+
     private fun planMoreDialog() {
         val items = arrayOf(
-            if (planLoop) "⟲  Pulang-pergi: ON (ketuk untuk ganti ke searah)" else "→  Searah: ketuk untuk ganti ke pulang-pergi",
+            if (planLoop) "⟲  Pulang-pergi (ketuk: searah)" else "→  Searah (ketuk: pulang-pergi)",
             "☷  Daftar titik",
             "⌕  Cari lokasi",
             "↗  Buka di Google Maps"
         )
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("Lainnya")
             .setItems(items) { _, i ->
                 when (i) {
@@ -912,7 +918,7 @@ class MapActivity : Activity() {
             setText("Rute " + (loadPlans().size + 1))
             setSingleLine()
         }
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("Simpan rencana rute")
             .setView(et)
             .setPositiveButton("Simpan") { _, _ ->
@@ -968,7 +974,7 @@ class MapActivity : Activity() {
         val items = ArrayList<String>()
         items.add("⚑  Tandai lokasi saya sekarang")
         pts.forEach { items.add(it[4] + " · " + it[3] + " m") }
-        android.app.AlertDialog.Builder(this)
+        dlg()
             .setTitle("Titik tersimpan (" + pts.size + ")")
             .setItems(items.toTypedArray()) { _, i ->
                 if (i == 0) {
@@ -992,7 +998,7 @@ class MapActivity : Activity() {
                     }
                 } else {
                     val p = pts[i - 1]
-                    android.app.AlertDialog.Builder(this)
+                    dlg()
                         .setTitle(p[4])
                         .setItems(arrayOf("Lihat di peta", "Bagikan lokasi", "Hapus titik")) { _, k ->
                             when (k) {
