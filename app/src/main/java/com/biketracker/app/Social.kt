@@ -21,6 +21,15 @@ object ProfileStore {
         p(c).edit().putString("name", v.trim().take(30)).apply()
     }
 
+    /** Kode Delaas pribadi (mis. DLS-7K3Q9X). Dibuat sekali, lalu tetap sama di HP ini. */
+    fun myCode(c: Context): String {
+        val saved = p(c).getString("my_code", "") ?: ""
+        if (PersonalCode.clean(saved) != null) return saved
+        val code = PersonalCode.generate()
+        p(c).edit().putString("my_code", code).apply()
+        return code
+    }
+
     /** Nama untuk ditampilkan; kosong diganti sebutan umum. */
     fun displayName(c: Context): String = name(c).ifEmpty { "Pengendara" }
 
@@ -160,5 +169,18 @@ object GroupStore {
 
     fun clearMeet(c: Context) {
         p(c).edit().remove("meet_lat").remove("meet_lon").apply()
+    }
+}
+
+/** Kode pribadi pengguna Delaas: "DLS-" diikuti 6 huruf/angka (tanpa huruf yang mirip: I, O, 0, 1). */
+object PersonalCode {
+    private const val ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+    fun generate(): String = "DLS-" + (1..6).map { ALPHABET[Random.nextInt(ALPHABET.length)] }.joinToString("")
+
+    /** Rapikan kode yang diketik atau ditempel (boleh tanpa tanda minus). Null bila bentuknya tidak sah. */
+    fun clean(raw: String): String? {
+        val s = raw.trim().uppercase(Locale.US).removePrefix("DLS").removePrefix("-").trim()
+        return if (s.length == 6 && s.all { it in ALPHABET }) "DLS-$s" else null
     }
 }
