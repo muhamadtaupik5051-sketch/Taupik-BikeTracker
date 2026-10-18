@@ -27,7 +27,6 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.Button
 import android.widget.EditText
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -2488,215 +2487,11 @@ class MainActivity : Activity() {
         return row
     }
 
-    // ---------- Status (teks + emoji, foto, hilang otomatis 24 jam) ----------
-
-    /** Kartu Status di tab Grup. Status disimpan di HP; teman melihatnya lewat tombol Bagikan. */
-    private fun statusCard(r: LinearLayout) {
-        val a = acc("Sepeda")
-        val s = StatusStore.current(this)
-        val c = card(t.surface, 16, 20)
-        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        head.addView(tv("Status", 16f, t.text, true), LinearLayout.LayoutParams(0, -2, 1f))
-        head.addView(tv("24 JAM", 10f, t.accent, true).apply {
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            background = box((t.accent and 0x00FFFFFF) or 0x26000000, 12)
-        })
-        c.addView(head)
-        if (s == null) {
-            c.add(tv("Bagikan kabar singkat ke teman atau pengguna Delaas lain: lagi gowes, selesai lari, atau titik kumpul. " +
-                "Status hilang otomatis setelah 24 jam.", 12f, t.muted), 6)
-            c.add(btn("✎   Tulis status", a, 16) { showStatusComposer("") }, 12, 0f, dp(48))
-        } else {
-            val who = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            who.addView(avatar(40))
-            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            col.addView(tv(ProfileStore.displayName(this), 14f, t.text, true))
-            col.addView(tv(s.remainingLabel(), 11f, t.muted))
-            who.addView(col, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
-            c.add(who, 12)
-            if (s.hasPhoto) {
-                StatusStore.loadPhoto(this)?.let { bmp ->
-                    val rounded = object : ViewOutlineProvider() {
-                        override fun getOutline(view: View, outline: Outline) {
-                            outline.setRoundRect(0, 0, view.width, view.height, dp(14).toFloat())
-                        }
-                    }
-                    c.add(ImageView(this).apply {
-                        setImageBitmap(bmp)
-                        adjustViewBounds = true
-                        maxHeight = dp(340)
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        outlineProvider = rounded
-                        clipToOutline = true
-                        contentDescription = "Foto status"
-                    }, 10)
-                }
-            }
-            if (s.text.isNotEmpty()) c.add(tv(s.text, 16f, t.text, true), 10)
-            val br = LinearLayout(this)
-            br.addView(btn("⤴ Bagikan", a, 16) {
-                StatusCard.share(this, t, a, ProfileStore.displayName(this), s)
-            }, LinearLayout.LayoutParams(0, dp(46), 1.3f))
-            br.addView(btn("Ubah", t.surface2, 16) { showStatusComposer(s.text) },
-                LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
-            br.addView(btn("Hapus", t.surface2, 16) {
-                confirm("Hapus status ini?") { StatusStore.clear(this); showGroup() }
-            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { leftMargin = dp(8) })
-            c.add(br, 12)
-        }
-        c.add(tv("Bagikan status lewat WhatsApp dan lainnya; pesannya memuat kode status. Teman menempelkan kode itu di " +
-            "Delaas mereka (tombol di bawah). Hanya teks yang ikut dalam kode, foto tidak. Tampil otomatis di aplikasi teman " +
-            "belum ada karena butuh server.", 11f, t.muted), 10)
-
-        // Status teman: dari kode yang ditempel
-        c.add(tv("STATUS TEMAN", 11f, t.muted, true), 16)
-        val friends = FriendStatusStore.list(this)
-        if (friends.isEmpty()) {
-            c.add(tv("Belum ada. Minta teman membagikan statusnya, lalu tempel kodenya di sini.", 12f, t.muted), 6)
-        }
-        for (fs in friends) {
-            val fr = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                background = box(t.surface2, 14)
-                setOnLongClickListener {
-                    confirm("Hapus status ${fs.name}?") { FriendStatusStore.remove(this@MainActivity, fs.name); showGroup() }
-                    true
-                }
-            }
-            val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            top.addView(tv(fs.name, 14f, t.text, true), LinearLayout.LayoutParams(0, -2, 1f))
-            top.addView(tv(fs.remainingLabel(), 10f, t.muted))
-            fr.addView(top)
-            fr.add(tv(fs.text, 14f, t.text), 4)
-            c.add(fr, 8)
-        }
-        c.add(btn("＋  Tempel kode status teman", t.surface2, 14) {
-            askText("Kode status teman", "Tempel kode DLS1… atau seluruh pesan", "") { raw ->
-                val fs = StatusCode.parse(raw)
-                when {
-                    fs == null -> Toast.makeText(this, "Kode tidak sah atau statusnya sudah berakhir.", Toast.LENGTH_LONG).show()
-                    FriendStatusStore.put(this, fs) -> {
-                        GroupStore.addMember(this, fs.name)
-                        Toast.makeText(this, "Status ${fs.name} ditambahkan.", Toast.LENGTH_SHORT).show()
-                        showGroup()
-                    }
-                    else -> Toast.makeText(this, "Status ${fs.name} itu sudah ada.", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }, 10, 0f, dp(46))
-        c.add(tv("Tekan lama status teman untuk menghapus.", 11f, t.muted), 6)
-        r.add(c, 12)
-    }
-
-    /** Dialog menulis status: teks, emoji cepat, foto, dan isi otomatis dari aktivitas terakhir. */
-    private fun showStatusComposer(initial: String) {
-        val draft = statusDraft ?: initial
-        statusDraft = null
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
-        }
-        val et = EditText(this).apply {
-            setText(draft)
-            setSelection(text.length)
-            hint = "Tulis status singkat…"
-            filters = arrayOf<android.text.InputFilter>(android.text.InputFilter.LengthFilter(StatusStore.MAX_CHARS))
-            minLines = 2
-            maxLines = 4
-            gravity = Gravity.TOP
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        }
-        col.addView(et, LinearLayout.LayoutParams(-1, -2))
-
-        val emojis = listOf("🚴", "🏃", "🚶", "🏍️", "🔥", "💪", "😄", "☕", "🌅", "🌧️", "📍", "👍")
-        val strip = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
-        val er = LinearLayout(this)
-        for (e in emojis) {
-            er.addView(TextView(this).apply {
-                text = e
-                textSize = 24f
-                setPadding(dp(8), dp(6), dp(8), dp(6))
-                setOnClickListener { et.text.insert(et.selectionStart.coerceAtLeast(0), e) }
-            })
-        }
-        strip.addView(er)
-        col.addView(strip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-
-        var dialog: AlertDialog? = null
-        val hasPhoto = StatusStore.current(this)?.hasPhoto == true
-        val photoRow = LinearLayout(this)
-        photoRow.addView(Button(this).apply {
-            text = if (hasPhoto) "📷 Ganti foto" else "📷 Tambah foto"
-            isAllCaps = false
-            setOnClickListener {
-                statusDraft = et.text.toString()
-                dialog?.dismiss()
-                pickStatusPhoto()
-            }
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        if (hasPhoto) {
-            photoRow.addView(Button(this).apply {
-                text = "Hapus foto"
-                isAllCaps = false
-                setOnClickListener {
-                    StatusStore.removePhoto(this@MainActivity)
-                    statusDraft = et.text.toString()
-                    dialog?.dismiss()
-                    showStatusComposer("")
-                }
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-        }
-        col.addView(photoRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        col.addView(Button(this).apply {
-            text = "🚴 Pakai aktivitas terakhir"
-            isAllCaps = false
-            setOnClickListener {
-                val rec = rawRecords().firstNotNullOfOrNull { parse(it) }
-                if (rec == null) Toast.makeText(this@MainActivity, "Belum ada aktivitas di Riwayat.", Toast.LENGTH_SHORT).show()
-                else et.setText(StatusStore.fromActivity(rec.mode, icon(rec.mode), rec.km, rec.elapsed))
-                et.setSelection(et.text.length)
-            }
-        }, LinearLayout.LayoutParams(-1, -2))
-
-        dialog = AlertDialog.Builder(this)
-            .setTitle("Status")
-            .setView(col)
-            .setPositiveButton("Simpan") { _, _ ->
-                val txt = StatusStore.clean(et.text.toString())
-                if (txt.isEmpty() && StatusStore.current(this)?.hasPhoto != true) {
-                    Toast.makeText(this, "Tulis sesuatu atau pilih foto.", Toast.LENGTH_SHORT).show()
-                } else {
-                    StatusStore.save(this, txt)
-                    showGroup()
-                }
-            }
-            .setNegativeButton("Batal", null)
-            .show()
-    }
-
-    private fun pickStatusPhoto() {
-        try {
-            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "image/*"
-            }
-            @Suppress("DEPRECATION")
-            startActivityForResult(i, reqStatusPhoto)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Tidak bisa membuka pemilih foto.", Toast.LENGTH_LONG).show()
-            showStatusComposer("")
-        }
-    }
-
     /** Grup: buat atau gabung grup dengan kode undangan, daftar teman, dan peta titik kumpul. */
     private fun showGroup() {
         val a = acc("Sepeda")
         val r = column()
         title(r, "GRUP", "Bersepeda bareng teman")
-        statusCard(r)
 
         if (!GroupStore.inGroup(this)) {
             val hero = card(t.surface, 18, 24)
@@ -2840,8 +2635,6 @@ class MainActivity : Activity() {
     private val reqPhoto = 4712
     private val reqGpx = 4713
     private val reqRouteGpx = 4714
-    private val reqStatusPhoto = 4715
-    private var statusDraft: String? = null
 
     private fun exportHistory() {
         val list = rawRecords()
@@ -2948,15 +2741,6 @@ class MainActivity : Activity() {
             } else {
                 Toast.makeText(this, "Foto tidak bisa dibaca.", Toast.LENGTH_LONG).show()
             }
-            return
-        }
-        if (requestCode == reqStatusPhoto) {
-            val picked = if (resultCode == RESULT_OK) data?.data else null
-            if (picked != null && !StatusStore.savePhoto(this, picked)) {
-                Toast.makeText(this, "Foto tidak bisa dibaca.", Toast.LENGTH_LONG).show()
-            }
-            showGroup()
-            showStatusComposer("")
             return
         }
         if (requestCode == reqGpx && resultCode == RESULT_OK) {
