@@ -2413,25 +2413,6 @@ class MainActivity : Activity() {
         }
         r.add(hc, 12)
 
-        // Kode Delaas pribadi
-        val myCode = ProfileStore.myCode(this)
-        val kc = card(t.surface, 16, 20)
-        kc.addView(tv("Kode Delaas saya", 13f, t.muted))
-        kc.add(mono(tv(myCode, 26f, t.accent, true)), 4)
-        kc.add(tv("Kode khusus milikmu. Bagikan ke teman supaya mereka bisa mengenali kamu di Delaas.", 12f, t.muted), 4)
-        val kr = LinearLayout(this)
-        kr.addView(btn("Salin", t.surface2, 16) {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("Kode Delaas", myCode))
-            Toast.makeText(this, "Kode disalin.", Toast.LENGTH_SHORT).show()
-        }, LinearLayout.LayoutParams(0, dp(44), 1f))
-        kr.addView(btn("⤴ Bagikan", t.accent, 16) {
-            shareText("Kode Delaas saya: $myCode\nTambahkan aku di Delaas! #Delaas", "Bagikan kode Delaas")
-        }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(8) })
-        kc.add(kr, 12)
-        r.add(kc, 10)
-
-        val recs = rawRecords().mapNotNull { parse(it) }
         val sc = card(t.surface, 12, 16).apply { orientation = LinearLayout.HORIZONTAL }
         fun cell(label: String, value: String, color: Int) {
             val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
