@@ -1,5 +1,8 @@
 # Catatan perubahan
 
+## 3.72
+- **Kode Delaas pribadi dihapus dari Profil** (kartu kode, tombol Salin dan Bagikan). Layar Profil kini langsung menampilkan ringkasan total jarak, aktivitas, dan durasi.
+
 ## 3.71
 - **Kode Delaas pribadi** di Profil (mis. DLS-7K3Q9X): dibuat otomatis sekali, bisa disalin dan dibagikan. Kode hanya ada di HP ini; belum dikirim ke server.
 - Unit test bertambah (bentuk dan pembersihan kode pribadi).
