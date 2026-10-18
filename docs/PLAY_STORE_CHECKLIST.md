@@ -23,6 +23,7 @@ Jalankan workflow, lalu unduh artifact **Delaas-AAB** (`app-release.aab`) dan un
 - **Data safety (kamera)**: izin kamera hanya dipakai untuk menyalakan lampu flash pada fitur Kedip flash. Tidak ada foto/video yang diambil, disimpan, atau dikirim. Jangan centang pengumpulan foto/video.
 - **Foreground service (kamera)**: jelaskan bahwa layanan latar depan jenis kamera dipakai menyalakan lampu flash secara berkala (fitur opsional, mati secara bawaan) sebagai penanda saat bersepeda, dan hanya berjalan setelah pengguna menyalakannya di Pengaturan. Sertakan video pendek: Pengaturan → Kedip flash AKTIF → notifikasi "Kedip flash aktif" → flash berkedip. Bila Play meminta, fitur ini bisa dihapus dari versi Play (izin CAMERA, FOREGROUND_SERVICE_CAMERA, FlashBlinkService, dan tombol di Pengaturan).
 - **Target API**: sejak 31 Agustus 2026 Play mewajibkan target API 36 (sudah diatur di versi 3.70).
+- **Data safety (status)**: teks dan foto status hanya disimpan di perangkat dan tidak dikirim ke server pengembang. Dibagikan hanya atas tindakan pengguna (tombol Bagikan).
 - **Kategori**: Kesehatan & kebugaran. **Iklan**: tidak ada.
 - **Aset toko**: ikon 512×512, feature graphic 1024×500, minimal 2 screenshot HP.
 - Akun pengembang baru (perorangan) wajib menjalankan **uji tertutup** dengan beberapa penguji selama beberapa minggu sebelum bisa rilis produksi.
