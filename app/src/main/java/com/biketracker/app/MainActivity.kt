@@ -2413,6 +2413,7 @@ class MainActivity : Activity() {
         }
         r.add(hc, 12)
 
+        val recs = rawRecords().mapNotNull { parse(it) }
         val sc = card(t.surface, 12, 16).apply { orientation = LinearLayout.HORIZONTAL }
         fun cell(label: String, value: String, color: Int) {
             val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
