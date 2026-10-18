@@ -1,5 +1,10 @@
 # Catatan perubahan
 
+## 3.71
+- **Status** di tab Grup: tulis status singkat (teks dan emoji), tambah foto, atau isi otomatis dari aktivitas terakhir. Status hilang otomatis setelah 24 jam dan bisa dibagikan sebagai kartu gambar lewat WhatsApp dan aplikasi lain. Tersimpan di HP.
+- **Kode status**: pesan Bagikan memuat kode; teman menempelkannya di Grup > Status teman untuk melihat status (teks saja) selama 24 jam. Tampil otomatis tanpa kode butuh server dan belum ada.
+- Unit test bertambah (teks status, masa berlaku 24 jam, label sisa waktu).
+
 ## 3.70
 - **Target Android 16 (API 36)**, wajib untuk Google Play sejak 31 Agustus 2026. Alat build dinaikkan (Android Gradle Plugin 8.9.1, Gradle 8.11.1).
 - **Kedip flash**: lampu flash berkedip 2× cepat berkala (Pengaturan); jeda bisa diatur dari 10 detik sampai 5 menit (bawaan 60 detik).
