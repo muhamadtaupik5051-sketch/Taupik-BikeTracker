@@ -1,6 +1,7 @@
 # Catatan perubahan
 
 ## 3.71
+- **Kode Delaas pribadi** di Profil (mis. DLS-7K3Q9X): dibuat otomatis sekali, bisa disalin dan dibagikan. Kode hanya ada di HP ini; belum dikirim ke server.
 - **Status** di tab Grup: tulis status singkat (teks dan emoji), tambah foto, atau isi otomatis dari aktivitas terakhir. Status hilang otomatis setelah 24 jam dan bisa dibagikan sebagai kartu gambar lewat WhatsApp dan aplikasi lain. Tersimpan di HP.
 - **Kode status**: pesan Bagikan memuat kode; teman menempelkannya di Grup > Status teman untuk melihat status (teks saja) selama 24 jam. Tampil otomatis tanpa kode butuh server dan belum ada.
 - Unit test bertambah (teks status, masa berlaku 24 jam, label sisa waktu).
